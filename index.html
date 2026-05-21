@@ -20,7 +20,6 @@
     </head>
     <body>
         <div class="buttons"></div>
-
         <script type="module">
             const res = await fetch("./list.json");
             const files = await res.json();
@@ -29,6 +28,9 @@
                 button.textContent = file;
                 button.onclick = _ => window.location.href = `./pages/${file}.html`;
                 document.querySelector(".buttons").appendChild(button);
+                const res = await fetch(`./pages/${file}.json`);
+                const data = await res.json();
+                document.querySelector(".buttons").innerHTML += data.desc;
             }
         </script>
     </body>
