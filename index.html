@@ -16,21 +16,42 @@
                 min-height: 100vh;
                 background-attachment: fixed;
             }
+            button {
+                border: 2px solid transparent;
+                border-radius: 2px;
+                height: 1em;
+                background:
+                    linear-gradient(135deg, rgba(127, 0, 63, 0.4) 0%, transparent 75%),
+                    linear-gradient(-45deg, rgba(63, 0, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(-135deg, rgba(0, 127, 63, 0.4) 0%, transparent 75%),
+                    padding-box,
+                    linear-gradient(135deg, rgba(255, 0, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(-45deg, rgba(127, 0, 255, 0.4) 0%, transparent 75%),
+                    linear-gradient(45deg, rgba(0, 255, 255, 0.4) 0%, transparent 75%),
+                    linear-gradient(-135deg, rgba(0, 255, 127, 0.4) 0%, transparent 75%);
+            }
         </style>
     </head>
     <body>
         <div class="buttons"></div>
         <script type="module">
-            const res = await fetch("./list.json");
-            const files = await res.json();
+            const listRes = await fetch("./list.json");
+            const files = await listRes.json();
+            const container = document.querySelector(".buttons");
+
             for (const file of files) {
                 const button = document.createElement("button");
                 button.textContent = file[0].toUpperCase() + file.slice(1);
                 button.onclick = _ => window.location.href = `./pages/${file}.html`;
-                document.querySelector(".buttons").appendChild(button);
-                const res = await fetch(`./pages/${file}.json`);
-                const data = await res.json();
-                document.querySelector(".buttons").innerHTML += "<br>" + data.desc;
+                container.appendChild(button);
+
+                const pageRes = await fetch(`./pages/${file}.json`);
+                const data = await pageRes.json();
+
+                const desc = document.createElement("p");
+                desc.textContent = data.desc;
+                container.appendChild(desc);
             }
         </script>
     </body>
