@@ -25,12 +25,12 @@
             const files = await res.json();
             for (const file of files) {
                 const button = document.createElement("button");
-                button.textContent = file;
+                button.textContent = file[0].toUpperCase() + file.slice(1);
                 button.onclick = _ => window.location.href = `./pages/${file}.html`;
                 document.querySelector(".buttons").appendChild(button);
                 const res = await fetch(`./pages/${file}.json`);
                 const data = await res.json();
-                document.querySelector(".buttons").innerHTML += data.desc;
+                document.querySelector(".buttons").innerHTML += "<br>" + data.desc;
             }
         </script>
     </body>
