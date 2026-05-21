@@ -1,18 +1,35 @@
 <!DOCTYPE html>
 <html lang="en">
     <head>
+        <title>My pages</title>
         <meta name="author" content="Rayan Bouzarni">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="desciption" content="All of my projects on a single page.">
+        <meta name="description" content="All of my projects on a single page.">
         <style>
             html {
                 background:
-                    linear-gradient(135deg, rgba(255, 0, 127, 0.4) 0%, transparent 50%),
-                    linear-gradient(-45deg, rgba(127, 0, 255, 0.4) 0%, transparent 50%),
-                    linear-gradient(45deg, rgba(0, 255, 255, 0.4) 0%, transparent 50%),
-                    linear-gradient(-135deg, rgba(0, 255, 127, 0.4) 0%, transparent 50%);
+                    linear-gradient(135deg, rgba(127, 0, 63, 0.4) 0%, transparent 75%),
+                    linear-gradient(-45deg, rgba(63, 0, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(-135deg, rgba(0, 127, 63, 0.4) 0%, transparent 75%);
                 background-color: #0a0a0a;
+                min-height: 100vh;
+                background-attachment: fixed;
             }
         </style>
     </head>
+    <body>
+        <div class="buttons"></div>
+
+        <script type="module">
+            const res = await fetch("./list.json");
+            const files = await res.json();
+            for (const file of files) {
+                const button = document.createElement("button");
+                button.textContent = file;
+                button.onclick = _ => window.location.href = `./pages/${file}.html`;
+                document.querySelector(".buttons").appendChild(button);
+            }
+        </script>
+    </body>
 </html>
