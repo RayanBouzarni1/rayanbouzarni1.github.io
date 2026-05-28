@@ -18,9 +18,13 @@
                 color: #dff;
             }
             button {
+                display: flex;
+                justify-content: center;
+                align-items: center;
                 border: 2px solid transparent;
                 border-radius: 2px;
                 height: 4em;
+                width: 20em;
                 font-size: 2em;
                 text-align: center;
                 background:
@@ -46,7 +50,7 @@
 
             for (const file of files) {
                 const button = document.createElement("button");
-                button.textContent = file[0].toUpperCase() + file.slice(1);
+                button.textContent = "<b>" + file[0].toUpperCase() + file.slice(1) + "</b>";
                 button.onclick = _ => window.location.href = `./pages/${file}.html`;
                 container.appendChild(button);
 
