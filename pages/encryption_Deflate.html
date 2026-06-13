@@ -1,30 +1,695 @@
 <!DOCTYPE html>
 <html lang="en">
-  <title>Test</title>
-    <head>
-        <meta name="author" content="Rayan Bouzarni">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="desciption" content="All of my projects on a single page.">
-        <style>
-            html {
-                background:
-                    linear-gradient(135deg, rgba(127, 0, 63, 0.4) 0%, transparent 75%),
-                    linear-gradient(-45deg, rgba(63, 0, 127, 0.4) 0%, transparent 75%),
-                    linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
-                    linear-gradient(-135deg, rgba(0, 127, 63, 0.4) 0%, transparent 75%);
-                background-color: #0a0a0a;
-                min-height: 100vh;
-                background-size: 100%;
-                background-attachment: fixed;
-                background-clip: border-box;
-                background-position: 0 0, 0 50px, 0 100;
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encryption Deflate (De)compressor</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700&display=swap');
+ 
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+ 
+    html {
+        padding: 2em;
+        background:
+            linear-gradient(135deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(-45deg, rgba(0, 0, 63, 0.4) 0%, transparent 75%),
+            linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(-135deg, rgba(0, 63, 127, 0.4) 0%, transparent 75%);
+        background-color: #0a0a0a;
+        min-height: 100vh;
+        background-attachment: fixed;
+        color: #dff;
+        font-family: 'Share Tech Mono', monospace;
+    }
+ 
+    h1 {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 1.6em;
+        letter-spacing: 0.12em;
+        color: #aff;
+        margin-bottom: 1.2em;
+        text-shadow: 0 0 18px rgba(0,255,255,0.3);
+    }
+ 
+    textarea {
+        width: 100%;
+        min-height: 8em;
+        background: rgba(0,20,40,0.7);
+        border: 1px solid rgba(0,200,255,0.2);
+        border-radius: 4px;
+        color: #dff;
+        font-family: 'Share Tech Mono', monospace;
+        font-size: 0.95em;
+        padding: 0.7em;
+        resize: vertical;
+        outline: none;
+    }
+ 
+    textarea:focus {
+        border-color: rgba(0,200,255,0.5);
+        box-shadow: 0 0 8px rgba(0,200,255,0.15);
+    }
+ 
+    .row {
+        display: flex;
+        gap: 1em;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 1em 0;
+    }
+ 
+    button {
+        cursor: pointer;
+        border: 2px solid transparent;
+        border-radius: 4px;
+        min-height: 2em;
+        gap: 4em;
+        width: 10em;
+        font-size: 2em;
+        text-align: center;
+        background:
+            linear-gradient(135deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(-45deg, rgba(0, 0, 63, 0.4) 0%, transparent 75%),
+            linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(-135deg, rgba(0, 63, 127, 0.4) 0%, transparent 75%),
+            padding-box,
+            linear-gradient(135deg, rgba(0, 0, 255, 0.4) 0%, transparent 75%),
+            linear-gradient(-45deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(45deg, rgba(0, 255, 255, 0.4) 0%, transparent 75%),
+            linear-gradient(-135deg, rgba(0, 127, 255, 0.4) 0%, transparent 75%);
+        color: #dff;
+        font-family: 'Share Tech Mono', monospace;
+        transition: opacity 0.15s;
+    }
+ 
+    button:hover { opacity: 0.8; }
+    button:disabled { opacity: 0.35; cursor: default; }
+ 
+    .file-label {
+        cursor: pointer;
+        border: 2px solid transparent;
+        border-radius: 4px;
+        padding: 0 1em;
+        text-align: center;
+        display: inline-block;
+        line-height: 2em;
+        background:
+            linear-gradient(135deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(-45deg, rgba(0, 0, 63, 0.4) 0%, transparent 75%),
+            linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(-135deg, rgba(0, 63, 127, 0.4) 0%, transparent 75%),
+            padding-box,
+            linear-gradient(135deg, rgba(0, 0, 255, 0.4) 0%, transparent 75%),
+            linear-gradient(-45deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+            linear-gradient(45deg, rgba(0, 255, 255, 0.4) 0%, transparent 75%),
+            linear-gradient(-135deg, rgba(0, 127, 255, 0.4) 0%, transparent 75%);
+        color: #dff;
+        font-family: 'Share Tech Mono', monospace;
+        font-size: 1em;
+        transition: opacity 0.15s;
+    }
+ 
+    .file-label:hover { opacity: 0.8; }
+ 
+    input[type="file"] { display: none; }
+ 
+    #status {
+        font-size: 0.85em;
+        color: #8cf;
+        min-height: 1.4em;
+        margin: 0.4em 0;
+        white-space: pre;
+    }
+ 
+    #log {
+        margin-top: 1em;
+        font-size: 0.78em;
+        color: rgba(150,220,255,0.6);
+        max-height: 10em;
+        overflow-y: auto;
+        line-height: 1.6;
+        white-space: pre;
+    }
+ 
+    label.field-label {
+        font-size: 0.78em;
+        color: rgba(150,220,255,0.7);
+        display: block;
+        margin-bottom: 0.3em;
+        letter-spacing: 0.08em;
+    }
+ 
+    .section { margin-bottom: 1.4em; }
+ 
+    .sep {
+        border: none;
+        border-top: 1px solid rgba(0,200,255,0.1);
+        margin: 1.2em 0;
+    }
+
+    .button-small {
+        font-size: 1em;
+        width: auto;
+        padding: 0 1em;
+    }
+
+    .settings-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5em;
+        margin: 1em 0;
+    }
+
+    .setting-group {
+        display: flex;
+        flex-direction: column;
+    }
+
+    input[type="number"], input[type="text"] {
+        background: rgba(0,20,40,0.7);
+        border: 1px solid rgba(0,200,255,0.2);
+        border-radius: 4px;
+        color: #dff;
+        font-family: 'Share Tech Mono', monospace;
+        font-size: 0.95em;
+        padding: 0.5em;
+        outline: none;
+    }
+
+    input[type="number"]:focus, input[type="text"]:focus {
+        border-color: rgba(0,200,255,0.5);
+        box-shadow: 0 0 8px rgba(0,200,255,0.15);
+    }
+
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+
+    input[type="number"] {
+        -moz-appearance: textfield;
+        appearance: textfield;
+    }
+</style>
+</head>
+<body>
+ 
+<h1>Encryption Deflate</h1>
+ 
+<div class="section">
+    <label class="field-label">SETTINGS</label>
+    <div class="settings-row">
+        <div class="setting-group">
+            <label class="field-label">Max Iterations</label>
+            <input type="number" id="maxIterInput" placeholder="Leave empty for no limit" min="0">
+        </div>
+    </div>
+</div>
+
+<hr class="sep">
+
+<div class="section">
+    <label class="field-label">INPUT</label>
+    <textarea id="inputText" placeholder="Paste text here…"></textarea>
+    <div class="row">
+        <label class="file-label">
+            Load file
+            <input type="file" id="fileInput">
+        </label>
+    </div>
+</div>
+
+<hr class="sep">
+
+<div class="row">
+    <button id="btnCompress">⇩</button>
+    <button id="btnDecompress">⇧</button>
+</div>
+
+<div id="status"></div>
+<div id="log"></div>
+
+<hr class="sep">
+
+<div class="section">
+    <label class="field-label">OUTPUT</label>
+    <textarea id="outputHex" placeholder="Result appears here…" readonly></textarea>
+    <div class="row">
+        <button id="btnCopy" class="button-small">Copy output</button>
+        <button id="btnDownload" class="button-small">Download as text</button>
+    </div>
+</div>
+
+<script type="module">
+const
+charset = `!"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_\`abcdefghijklmnopqrstuvwxyz{|}~ ¡¢£¤¥¦§¨©ª«¬\n®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρσςτυφχψω€∞≈≠≤≥√™∫∂∑∏†‡∇∧∨`,
+charsetChars = Array.from(charset),
+byteCharset = charsetChars.slice(0, 256),
+charsetSet = new Set(charsetChars),
+charsetByteMap = new Map(byteCharset.map((char, byte) => [char, byte])),
+packetMagic = ``,
+packetVersion = 1,
+enc = new TextEncoder(),
+warnedInvalidChars = new Set();
+
+function formatSize(bytes) {
+    return bytes + ' B';
+}
+
+function validateCharset(text) {
+    for (let char of text) {
+        if (!charsetSet.has(char)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function bytesToCharset(bytes) {
+    const encoded = new Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) {
+        encoded[i] = byteCharset[bytes[i]];
+    }
+    return encoded.join('');
+}
+
+function charsetToBytes(encoded) {
+    const chars = Array.from(encoded);
+    const bytes = [];
+    
+    for (let i = 0; i < chars.length; i++) {
+        const char = chars[i];
+        const byte = charsetByteMap.get(char);
+        if (byte === undefined) {
+            if (!warnedInvalidChars.has(char)) {
+                warnedInvalidChars.add(char);
+                log(`⚠ WARNING: Invalid character filtered: '${char}'`);
             }
-        </style>
-    </head>
-    <body>
-        HIIIIIIIII
-        <script>
-            
-        </script>
-    </body>
+        } else {
+            bytes.push(byte);
+        }
+    }
+    
+    return new Uint8Array(bytes);
+}
+
+function encodeVarUint(value) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+        throw new Error('Invalid integer value');
+    }
+
+    const bytes = [];
+    do {
+        let byte = value % 128;
+        value = Math.floor(value / 128);
+        if (value > 0) byte |= 0x80;
+        bytes.push(byte);
+    } while (value > 0);
+
+    return bytes;
+}
+
+function decodeVarUint(bytes, offset) {
+    let value = 0;
+    let multiplier = 1;
+
+    while (offset < bytes.length) {
+        const byte = bytes[offset++];
+        value += (byte & 0x7f) * multiplier;
+
+        if ((byte & 0x80) === 0) {
+            return { value, offset };
+        }
+
+        multiplier *= 128;
+        if (multiplier > Number.MAX_SAFE_INTEGER / 128) {
+            throw new Error('Layer count is too large');
+        }
+    }
+
+    throw new Error('Truncated layer count');
+}
+
+function methodFromArrayIndex(index) {
+    if (index === 0) return { encrypted: false, keyByte: 0 };
+    return { encrypted: true, keyByte: index - 1 };
+}
+
+function packCompressed(payloadBytes, methods) {
+    const header = [packetVersion, ...encodeVarUint(methods.length)];
+
+    for (const method of methods) {
+        header.push(method.encrypted ? 1 : 0, method.keyByte);
+    }
+
+    const packetBytes = new Uint8Array(header.length + payloadBytes.length);
+    packetBytes.set(header);
+    packetBytes.set(payloadBytes, header.length);
+
+    return packetMagic + bytesToCharset(packetBytes);
+}
+
+function unpackCompressed(packetText) {
+    if (!packetText.startsWith(packetMagic)) return null;
+
+    const packetBytes = charsetToBytes(packetText.slice(packetMagic.length));
+    let offset = 0;
+
+    if (packetBytes.length < 2) {
+        throw new Error('Compressed packet is too short');
+    }
+
+    const version = packetBytes[offset++];
+    if (version !== packetVersion) {
+        throw new Error(`Unsupported packet version ${version}`);
+    }
+
+    const decodedCount = decodeVarUint(packetBytes, offset);
+    const layerCount = decodedCount.value;
+    offset = decodedCount.offset;
+
+    const methods = [];
+    for (let i = 0; i < layerCount; i++) {
+        if (offset + 2 > packetBytes.length) {
+            throw new Error('Compressed packet is missing layer metadata');
+        }
+
+        const flag = packetBytes[offset++];
+        const keyByte = packetBytes[offset++];
+
+        if (flag !== 0 && flag !== 1) {
+            throw new Error(`Invalid layer flag ${flag}`);
+        }
+
+        methods.push({ encrypted: flag === 1, keyByte });
+    }
+
+    return {
+        methods,
+        payload: packetBytes.slice(offset)
+    };
+}
+ 
+function log(msg) {
+    const el = document.getElementById('log');
+    el.textContent += msg + '\n';
+    el.scrollTop = el.scrollHeight;
+}
+ 
+function status(msg) {
+    document.getElementById('status').textContent = msg;
+}
+
+function getMaxIterations() {
+    const val = document.getElementById('maxIterInput').value.trim();
+    if (!val || !/^[0-9]+$/.test(val)) return null;
+    return parseInt(val);
+}
+ 
+async function deflateCompress(data) {
+    const cs = new CompressionStream("deflate-raw");
+    const writer = cs.writable.getWriter();
+    writer.write(data);
+    writer.close();
+    return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+
+async function deflateDecompress(data) {
+    const ds = new DecompressionStream("deflate-raw");
+    const writer = ds.writable.getWriter();
+    writer.write(data);
+    writer.close();
+    return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+}
+ 
+async function deriveKey(key) {
+    const keyBytes = typeof key === 'number' ? Uint8Array.of(key) : enc.encode(key);
+    const hash = await crypto.subtle.digest("SHA-256", keyBytes);
+    return crypto.subtle.importKey("raw", hash, { name: "AES-CTR" }, false, ["encrypt", "decrypt"]);
+}
+ 
+async function aesCTR(key, data) {
+    const cryptoKey = await deriveKey(key);
+    const iv = new Uint8Array(16);
+    const result = await crypto.subtle.encrypt({ name: "AES-CTR", counter: iv, length: 64 }, cryptoKey, data);
+    return new Uint8Array(result);
+}
+ 
+async function aesCTRDecrypt(key, data) {
+    const cryptoKey = await deriveKey(key);
+    const iv = new Uint8Array(16);
+    const result = await crypto.subtle.decrypt({ name: "AES-CTR", counter: iv, length: 64 }, cryptoKey, data);
+    return new Uint8Array(result);
+}
+ 
+function waitForPaint() {
+    return new Promise(resolve => requestAnimationFrame(resolve));
+}
+
+async function compress(inputText) {
+    document.getElementById('log').textContent = '';
+    const maxIter = getMaxIterations();
+    let current = inputText,
+    iteration = 0;
+    const methods = [];
+    const originalBytes = charsetToBytes(inputText);
+ 
+    log(`Input size: ${formatSize(originalBytes.length)} (${originalBytes.length} B)`);
+    log(`---`);
+
+    while (true) {
+        const inputBytes = charsetToBytes(current);
+
+        if (inputBytes.length < 100) {
+            log(`[Iteration #${iteration}] Stop: input is under 100 B, using current input`);
+            break;
+        }
+
+        if (maxIter !== null && iteration >= maxIter) {
+            log(`[Iteration #${iteration}] Stopped: max iterations reached`);
+            break;
+        }
+
+        const candidates = new Array(257);
+        let completed = 0;
+
+        status(`#Iteration ${iteration} 0%`);
+        await waitForPaint();
+
+        try {
+            candidates[0] = await deflateCompress(inputBytes);
+        } catch (err) {
+            log(`[Iteration #${iteration}] Stop: Deflate failed for input (${err.message}); using current input`);
+            break;
+        }
+
+        const updateProgress = () => {
+            completed += 1;
+            status(`#Iteration ${iteration} ${((completed / 256) * 100).toFixed(2)}%`);
+        };
+
+        const tasks = [];
+        for (let n = 1; n < 257; n++) {
+            const arrayIndex = n;
+            const keyChar = byteCharset[n - 1];
+
+            tasks.push((async () => {
+                try {
+                    const encrypted = await aesCTR(keyChar, inputBytes);
+                    candidates[arrayIndex] = await deflateCompress(encrypted);
+                } catch (err) {
+                    candidates[arrayIndex] = null;
+                    log(`[Iteration #${iteration}] Array[${arrayIndex}] failed: ${err.message}`);
+                } finally {
+                    updateProgress();
+                }
+            })());
+        }
+
+        await Promise.all(tasks);
+
+        let bestIndex = -1;
+        let bestOutput = null;
+        for (let i = 0; i < candidates.length; i++) {
+            const output = candidates[i];
+            if (!output) continue;
+            if (bestOutput === null || output.length < bestOutput.length) {
+                bestIndex = i;
+                bestOutput = output;
+            }
+        }
+
+        if (!bestOutput) {
+            log(`[Iteration #${iteration}] Stop: no candidate produced output`);
+            break;
+        }
+
+        const method = methodFromArrayIndex(bestIndex);
+        const keyLabel = method.encrypted ? JSON.stringify(byteCharset[method.keyByte]) : 'none';
+        log(`[Iteration #${iteration}] input: ${formatSize(inputBytes.length)} (${inputBytes.length} B), best: Array[${bestIndex}], key: ${keyLabel}, output: ${formatSize(bestOutput.length)} (${bestOutput.length} B)`);
+
+        if (bestOutput.length >= inputBytes.length) {
+            log(`[Iteration #${iteration}] Stop: output (${formatSize(bestOutput.length)}) >= input (${formatSize(inputBytes.length)}); using current input`);
+            break;
+        }
+
+        methods.push(method);
+        current = bytesToCharset(bestOutput);
+        status(`#Iteration ${iteration++}`);
+        await waitForPaint();
+    }
+
+    const finalBytes = charsetToBytes(current);
+    let output = current;
+    let storedIterations = methods.length;
+
+    if (methods.length > 0) {
+        const packetOutput = packCompressed(finalBytes, methods);
+        const packetSize = packetOutput.length;
+
+        if (packetSize < originalBytes.length) {
+            output = packetOutput;
+            log(`Packet size with decode metadata: ${formatSize(packetSize)} (${packetSize} B)`);
+        } else {
+            output = inputText;
+            storedIterations = 0;
+            log(`Packet with decode metadata would be ${formatSize(packetSize)} (${packetSize} B), so the original input is kept`);
+        }
+    }
+
+    const outputSize = output.length;
+    const compressionRatio = originalBytes.length === 0 ? '0.0' : ((1 - outputSize / originalBytes.length) * 100).toFixed(1);
+    status(`Done. ${formatSize(originalBytes.length)} → ${formatSize(outputSize)} (${compressionRatio}% reduction, ${storedIterations} iteration(s))`);
+    return output;
+}
+ 
+async function decompress(charsetInput) {
+    document.getElementById('log').textContent = '';
+
+    let packet;
+    try {
+        packet = unpackCompressed(charsetInput);
+    } catch(e) {
+        throw new Error('Invalid compressed packet: ' + e.message);
+    }
+
+    if (!packet) {
+        log(`Input has no Encryption Deflate packet header; treating it as raw charset text`);
+        status(`Done. Raw input returned unchanged (${formatSize(Array.from(charsetInput).length)})`);
+        return charsetInput;
+    }
+
+    let current = packet.payload;
+
+    log(`Packet size: ${formatSize(charsetInput.length)} (${charsetInput.length} B)`);
+    log(`Payload size: ${formatSize(current.length)} (${current.length} B)`);
+    log(`Layers: ${packet.methods.length}`);
+    log(`---`);
+
+    for (let i = packet.methods.length - 1; i >= 0; i--) {
+        const method = packet.methods[i];
+        let decodedLayer;
+
+        try {
+            decodedLayer = await deflateDecompress(current);
+        } catch (err) {
+            throw new Error(`Deflate failed at layer ${i}: ${err.message}`);
+        }
+
+        if (method.encrypted) {
+            const keyChar = byteCharset[method.keyByte];
+            current = await aesCTRDecrypt(keyChar, decodedLayer);
+            log(`[Layer #${i}] Deflate + AES key ${JSON.stringify(keyChar)} → ${formatSize(current.length)} (${current.length} B)`);
+        } else {
+            current = decodedLayer;
+            log(`[Layer #${i}] Deflate → ${formatSize(current.length)} (${current.length} B)`);
+        }
+    }
+
+    const resultText = bytesToCharset(current);
+
+    if (!validateCharset(resultText)) {
+        throw new Error('Decoded output contains characters outside the charset');
+    }
+
+    status(`Done. ${formatSize(charsetInput.length)} → ${formatSize(current.length)} (${packet.methods.length} layer(s))`);
+    return resultText;
+}
+ 
+let outputBytes = null;
+ 
+document.getElementById('fileInput').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    document.getElementById('inputText').value = text;
+    status(`Loaded ${file.name} (${formatSize(text.length)})`);
+});
+ 
+document.getElementById('btnCompress').addEventListener('click', async () => {
+    const raw = document.getElementById('inputText').value;
+    
+    document.getElementById('btnCompress').disabled = true;
+    document.getElementById('btnDecompress').disabled = true;
+    try {
+        const charsetOutput = await compress(raw);
+        outputBytes = charsetToBytes(charsetOutput);
+        document.getElementById('outputHex').value = charsetOutput;
+        document.getElementById('outputHex').placeholder = 'Compressed (in charset)';
+    } catch(err) {
+        status(`✗ Error during compression: ${err.message}`);
+        console.error(err);
+    } finally {
+        document.getElementById('btnCompress').disabled = false;
+        document.getElementById('btnDecompress').disabled = false;
+    }
+});
+ 
+document.getElementById('btnDecompress').addEventListener('click', async () => {
+    const charsetInput = document.getElementById('inputText').value;
+    if (charsetInput.length === 0) {
+        status('✗ Input cannot be empty.');
+        return;
+    }
+    
+    // Validate that input is in charset
+    if (!validateCharset(charsetInput)) {
+        status('✗ Input contains characters outside the charset.');
+        return;
+    }
+    
+    document.getElementById('btnCompress').disabled = true;
+    document.getElementById('btnDecompress').disabled = true;
+    try {
+        const decompressedText = await decompress(charsetInput);
+        outputBytes = charsetToBytes(decompressedText);
+        document.getElementById('outputHex').value = decompressedText;
+        document.getElementById('outputHex').placeholder = 'Decompressed text';
+    } catch(err) {
+        status(`✗ Error during decompression: ${err.message}`);
+        console.error(err);
+    } finally {
+        document.getElementById('btnCompress').disabled = false;
+        document.getElementById('btnDecompress').disabled = false;
+    }
+});
+ 
+document.getElementById('btnCopy').addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById('outputHex').value);
+    status('✓ Copied to clipboard.');
+});
+ 
+document.getElementById('btnDownload').addEventListener('click', () => {
+    const charsetOutput = document.getElementById('outputHex').value;
+    if (!charsetOutput) return;
+    const blob = new Blob([charsetOutput], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'output.edf';
+    a.click();
+});
+</script>
+</body>
 </html>
