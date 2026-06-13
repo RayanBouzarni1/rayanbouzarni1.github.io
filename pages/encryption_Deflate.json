@@ -1,0 +1,3 @@
+{
+  "desc": "This algorithm compressed your data with Deflate. After that it encrypts it 255 times and checks which compresses the best out of all of them. This is barely any better than normal Deflate and rarely beats it, but if you're lucky it compresses a little bit better."
+}

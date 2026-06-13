@@ -12,9 +12,6 @@
             * { box-sizing: border-box; margin: 0; padding: 0; }
  
             html {
-                font-family: 'Share Tech Mono', monospace;
-                color: #dff;
-                display: flex;
                 padding: 2em;
                 background:
                     linear-gradient(135deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
@@ -24,10 +21,8 @@
                 background-color: #0a0a0a;
                 min-height: 100vh;
                 background-attachment: fixed;
-            }
- 
-            body {
-                width: 100%;
+                color: #dff;
+                font-family: 'Share Tech Mono', monospace;
             }
  
             h1 {
@@ -39,23 +34,15 @@
                 text-shadow: 0 0 18px rgba(0,255,255,0.3);
             }
  
-            .buttons {
-                display: flex;
-                flex-direction: column;
-                gap: 0.6em;
-            }
- 
-            button {
-                font-family: 'Orbitron', sans-serif;
+            button,
+            .file-label {
                 cursor: pointer;
                 border: 2px solid transparent;
                 border-radius: 4px;
-                min-height: 2em;
-                min-width: 10em;
-                width: fit-content;
                 padding: 0.5em 1em;
-                font-size: 1.2em;
                 text-align: center;
+                display: inline-block;
+                line-height: 2em;
                 background:
                     linear-gradient(135deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
                     linear-gradient(-45deg, rgba(0, 0, 63, 0.4) 0%, transparent 75%),
@@ -67,40 +54,61 @@
                     linear-gradient(45deg, rgba(0, 255, 255, 0.4) 0%, transparent 75%),
                     linear-gradient(-135deg, rgba(0, 127, 255, 0.4) 0%, transparent 75%);
                 color: #dff;
+                font-family: 'Share Tech Mono', monospace;
+                font-size: 1em;
                 transition: opacity 0.15s;
             }
  
-            button:hover { opacity: 0.8; }
+            button:hover,
+            .file-label:hover { opacity: 0.8; }
  
-            p {
+            #output {
                 font-size: 0.85em;
                 color: rgba(150, 220, 255, 0.6);
                 line-height: 1.6;
-                margin-top: 0.2em;
+                display: block;
+                margin-top: 1em;
+            }
+ 
+            #output a {
+                color: #8cf;
+                text-decoration: none;
+            }
+ 
+            #output a:hover {
+                text-decoration: underline;
             }
         </style>
     </head>
     <body>
-        <div class="buttons"></div>
+        <h1>HTML Compressor</h1><br>
+        <label class="file-label">
+            <input type="file" accept=".html" hidden>
+            Select a file...
+        </label><br><br>
+        <span id="output"></span>
         <script type="module">
-            const listRes = await fetch("./list.json");
-            const files = await listRes.json();
-            const container = document.querySelector(".buttons");
+            import { ZstdInit } from "https://cdn.jsdelivr.net/npm/@oneidentity/zstd-js/+esm";
 
-            for (const file of files) {
-                const button = document.createElement("button");
-                button.innerHTML = "<b>" + (file[0].toUpperCase() + file.slice(1)).replace(/_/g, " ") + "</b>";
-                button.onclick = _ => window.location.href = `./pages/${file}.html`;
-                container.appendChild(button);
+            const { ZstdSimple } = await ZstdInit(),
+            input = document.querySelector("input[type=file]");
 
-                const pageRes = await fetch(`./pages/${file}.json`);
-                const data = await pageRes.json();
+            input.addEventListener("change", () => {
+                const file = input.files[0];
+                const reader = new FileReader();
+                reader.onload = e => {
+                    const data = new TextEncoder().encode(e.target.result);
+                    const compressed = ZstdSimple.compress(data, 22);
+                    const b64 = btoa(String.fromCharCode(...compressed));
 
-                const desc = document.createElement("p");
-                desc.textContent = data.desc;
-                desc.innerHTML += "<br><br>";
-                container.appendChild(desc);
-            }
+                    const output = `<script type="module">import{ZstdInit}from"https://cdn.jsdelivr.net/npm/@oneidentity/zstd-js/+esm";const{ZstdSimple}=await ZstdInit();const d=ZstdSimple.decompress(Uint8Array.from(atob("${b64}"),c=>c.charCodeAt(0)));document.open();document.write(new TextDecoder().decode(d));document.close();<\/script>`;
+
+                    const url = URL.createObjectURL(new Blob([output], { type: "text/html" }));
+                    document.getElementById("output").innerHTML =
+                        `Compressed: ${output.length} bytes (original: ${data.length} bytes). <a href="${url}" download="${file.name}"><u>Download</u></a>`;
+                };
+                reader.readAsText(file);
+            });
         </script>
     </body>
 </html>

@@ -1,0 +1,3418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Game</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+html,
+body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: black;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+canvas {
+  display: block;
+  image-rendering: pixelated;
+  cursor: crosshair;
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const GAME_W = 1920,
+  GAME_H = 1080,
+  BG_END = 0,
+  GROUND_START = 0,
+  GROUND_END = (9 * GAME_H) / 10,
+  HUD_START = (9 * GAME_H) / 10,
+  HUD_H = GAME_H - HUD_START,
+  BASE_SPEED = GAME_H / 10,
+  GROUND_Y = GROUND_START + (GROUND_END - GROUND_START) / 2,
+  PLAYER_RADIUS = 8,
+  POWER_MAX = 100,
+  MAX_AIM_INPUT_LENGTH = 25 * 3 * 1.08,
+  MAX_AIM_DRAW_LENGTH = 162,
+  MAX_SHOT_SPEED = 25 * 3 * 1.08 * 12,
+  MAX_UP_FLIGHT_SECONDS = 3,
+  PROJECTILE_GRAVITY = (MAX_SHOT_SPEED * 2) / MAX_UP_FLIGHT_SECONDS,
+  SELF_HIT_ARM_TIME = 0.25,
+  DEFAULT_TRAIL_LENGTH = 34,
+  HUD_STATS_W = 250,
+  ATTACK_SLOT_CHARS = 20,
+  ATTACK_SLOT_GAP = 4,
+  ATTACK_SLOT_H = 28,
+  ATTACK_SLOT_PAD_X = 10,
+  HEALTH_BAR_W = GAME_H / 10,
+  HEALTH_BAR_H = 12,
+  HEALTH_BAR_OFFSET_Y = 28,
+  ORB_VALUES = [
+    { v: 10, chance: 0.5, color: 0xff0000 },
+    { v: 20, chance: 0.25, color: 0xffff00 },
+    { v: 30, chance: 0.15, color: 0x7fff00 },
+    { v: 40, chance: 0.05, color: 0x00ff00 },
+    { v: 50, chance: 0.03, color: 0x00ffff },
+    { v: 75, chance: 0.015, color: 0x0000ff },
+    { v: 100, chance: 0.005, color: 0x7f00ff },
+  ],
+  ORB_COUNTS = [
+    { n: 3, chance: 0.5 },
+    { n: 4, chance: 0.25 },
+    { n: 5, chance: 0.15 },
+    { n: 6, chance: 0.05 },
+    { n: 7, chance: 0.03 },
+    { n: 8, chance: 0.0075 },
+    { n: 9, chance: 0.0075 },
+    { n: 15, chance: 0.004 },
+    { n: 100, chance: 0.001 },
+  ];
+
+const canvas = document.getElementById("game"),
+  ctx = canvas.getContext("2d");
+canvas.width = GAME_W;
+canvas.height = GAME_H;
+
+let terrain = [],
+  playerX = 100,
+  playerProgress = 0,
+  keys = {},
+  lastTime = Date.now(),
+  gameRunning = false,
+  gameStarted = false,
+  seed = 0,
+  mouseX = GAME_W / 2,
+  mouseY = GAME_H / 2,
+  playerHealth = 100,
+  balls = [],
+  craters = [],
+  shotCounter = 0,
+  selectedAttackIndex = 0,
+  hudAttackSlots = [],
+  fuelMax = 216,
+  fuel = fuelMax,
+  hasShot = false,
+  player2X = GAME_W - 100,
+  player2Progress = 0,
+  player2Health = 100,
+  currentPlayer = 1,
+  turnActive = false,
+  turnTimer = 0,
+  gameOver = false,
+  winner = null,
+  points = [0, 0],
+  pointOrbs = [],
+  rectFlashes = [],
+  // FIX 3: storage for trails of projectiles that went out of bounds
+  fadingTrails = [],
+  screen = "menu",
+  screenHistory = [],
+  gameMode = "singledevice",
+  settingsData = { map: "fortress" },
+  maps = {
+    wavy: (x) => {
+      const t = (x / GAME_W) * 20 - 10,
+        norm =
+          (Math.cos(3 * t) * (Math.sin(t) + 1) +
+            4 * 1.05 ** (t ** 2 * -1) +
+            t ** 2 / 10 -
+            4 -
+            -4) /
+          (6 - -4);
+      return HUD_START - norm * (HUD_START - GROUND_START) - 450;
+    },
+    flat: (x) => 50,
+    bowl: (x) => (x - 960) ** 2 / -2e3 + 200,
+    zigzag: (x) => -Math.abs((x % 100) - 50) + 100,
+    dip: (x) => (x - 960) ** 2 / -1.25e3 + 200 + 100,
+    fortress: (x) => -Math.abs(Math.sin(x / 100) ** 21) * 100,
+  };
+
+terrainf = maps.wavy;
+
+let attacks = {
+    single: {
+      pt: 0,
+      name: "Single",
+      group: "shots",
+      bullets: [
+        {
+          id: "main",
+          damage: 14,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 24,
+          color: 0xffffff,
+        },
+      ],
+    },
+    nuke: {
+      pt: 150,
+      name: "Nuke",
+      group: "neuclear",
+      bullets: [
+        {
+          id: "nuke",
+          damage: 255,
+          range: 1,
+          weight: 2,
+          radius: 24,
+          crater: 216,
+          color: 0xffff00,
+          trailLength: 112,
+          terrainArmed: false,
+        },
+      ],
+    },
+    laser: {
+      pt: 30,
+      name: "Laser",
+      group: "lasers",
+      bullets: [
+        {
+          id: "laser",
+          damage: 10,
+          range: 1,
+          weight: 0,
+          radius: 4,
+          crater: 4,
+          color: 0xff0000,
+          trailLength: 216,
+        },
+      ],
+    },
+    beam: { pt: 60, name: "Beam", bullets: [], group: "lasers" },
+    laserstream: {
+      pt: 150,
+      name: "Laserstream",
+      group: "lasers",
+      bullets: Array.from({ length: 10 }, (_, i) => ({
+        id: "laserstream_" + crypto.randomUUID(),
+        damage: 6.25 - i / 2,
+        range: 0.75 - i / 20,
+        weight: 0,
+        radius: 4 - i / 4,
+        crater: 12 - (1.5 * i) / 2,
+        color: 0xff0000,
+        trailLength: 54,
+        delay: -i / 10 + 1,
+        terrainArmed: false,
+      })),
+    },
+    cluster: { pt: 60, name: "cluster", bullets: [], group: "cluster" },
+    rain: {
+      pt: 0,
+      name: "Rain",
+      bullets: [
+        {
+          id: "rain",
+          damage: 0,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 0,
+          color: 0x3f5f7f,
+          bounce: 0.75,
+          bounceCount: 100,
+          onexplode: (b) =>
+            balls.push(
+              ...Array.from({ length: 20 }, (_, i) => ({
+                shotId: b.shotId,
+                localId: `raindrop_${crypto.randomUUID()}`,
+                parentLocalId: null,
+                orbit: null,
+                x: b.x + Math.random() * 320 - 160,
+                y: -170 + Math.random() * 320 - 160,
+                vx: 0,
+                vy: 0,
+                weight: 1,
+                gravity: PROJECTILE_GRAVITY,
+                radius: 3,
+                crater: 9,
+                color: b.color,
+                damage: 12,
+                trailLength: b.trailLength,
+                trail: [],
+                age: 0,
+                dead: false,
+                bounce: 0,
+                bounceCount: 0,
+                mineGroup: [],
+                spawnMines: false,
+                isStaticMine: false,
+                terrainArmed: true,
+              })),
+            ),
+        },
+      ],
+    },
+    landmine: {
+      pt: 50,
+      name: "Landmine",
+      group: "explosives",
+      bullets: [
+        {
+          id: "mine",
+          damage: 50,
+          range: 1,
+          spawnMines: true,
+          weight: 1,
+          radius: 12,
+          crater: 36,
+          color: 0x7f7f7f,
+          trailLength: 54,
+          bounce: 0.8,
+          bounceCount: 4,
+        },
+      ],
+    },
+    grenade: {
+      pt: 30,
+      name: "Grenade",
+      group: "grenades",
+      bullets: [
+        {
+          id: "grenade",
+          damage: 80,
+          range: 0.75,
+          spawnMines: false,
+          weight: 1,
+          radius: 6,
+          crater: 36,
+          color: 0x007f00,
+          trailLength: 54,
+          bounce: 0.6,
+          bounceCount: 100,
+        },
+      ],
+    },
+    shrapnel: {
+      pt: 80,
+      name: "Shrapnel",
+      group: "grenades",
+      bullets: [
+        {
+          id: "shrapnel",
+          damage: 75,
+          range: 0.75,
+          spawnMines: false,
+          weight: 1,
+          radius: 8,
+          crater: 42,
+          color: 0x005f00,
+          trailLength: 54,
+          bounce: 0.5,
+          bounceCount: 125,
+          onexplode: (b) =>
+            Array.from({ length: 20 }, (_) => ({
+              shotId: b.shotId,
+              localId: `shrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x,
+              y: b.y - 4,
+              vx: Math.random() * 400 - 200,
+              vy: -Math.random() * 600,
+              weight: 1,
+              gravity: PROJECTILE_GRAVITY,
+              radius: 4,
+              crater: 12,
+              color: 0x1f3f1f,
+              damage: 12,
+              trailLength: b.trailLength,
+              trail: [],
+              age: 0,
+              dead: false,
+              bounce: 0,
+              bounceCount: 0,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+            })).forEach((x) => balls.push(x)),
+        },
+      ],
+    },
+    grenaderain: {
+      pt: 120,
+      name: "Grenade rain",
+      group: "grenades",
+      bullets: [
+        {
+          id: "grenaderain",
+          damage: 0,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 0,
+          color: 0x3f7f5f,
+          bounce: 0.75,
+          bounceCount: 100,
+          onexplode: (b) =>
+            balls.push(
+              ...Array.from({ length: 20 }, (_, i) => ({
+                id: "grenaderain" + i,
+                shotId: b.shotId,
+                localId: `grenaderain_${crypto.randomUUID()}`,
+                parentLocalId: null,
+                orbit: null,
+                x: b.x + Math.random() * 320 - 160,
+                y: -170 + Math.random() * 320 - 160,
+                vx: 0,
+                vy: 0,
+                weight: 1,
+                gravity: PROJECTILE_GRAVITY,
+                radius: 3,
+                crater: 9,
+                color: b.color,
+                damage: 12,
+                trailLength: b.trailLength,
+                trail: [],
+                age: 0,
+                dead: false,
+                bounce: 0.75,
+                bounceCount: 75,
+                mineGroup: [],
+                spawnMines: false,
+                isStaticMine: false,
+                terrainArmed: true,
+              })),
+            ),
+        },
+      ],
+    },
+    shrapnelrain: {
+      pt: 150,
+      name: "Shrapnel rain",
+      group: "grenades",
+      bullets: [
+        {
+          id: "shrapnelrain",
+          damage: 0,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 0,
+          color: 0x2f6f4f,
+          bounce: 0.75,
+          bounceCount: 100,
+          onexplode: (b) =>
+            balls.push(
+              ...Array.from({ length: 20 }, (_, i) => ({
+                shotId: b.shotId,
+                localId: `shrapnelrain_${crypto.randomUUID()}`,
+                parentLocalId: null,
+                orbit: null,
+                x: b.x + Math.random() * 320 - 160,
+                y: -170 + Math.random() * 320 - 160,
+                vx: 0,
+                vy: 0,
+                weight: 1,
+                gravity: PROJECTILE_GRAVITY,
+                radius: 3,
+                crater: 9,
+                color: b.color,
+                damage: 10,
+                trailLength: 54,
+                trail: [],
+                age: 0,
+                dead: false,
+                bounce: 0.75,
+                bounceCount: 75,
+                mineGroup: [],
+                spawnMines: false,
+                isStaticMine: false,
+                terrainArmed: true,
+                onexplode: (b1) =>
+                  Array.from({ length: 8 }, (_) => ({
+                    shotId: b1.shotId,
+                    localId: `shrapnelrain_${crypto.randomUUID()}_${crypto.randomUUID()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b1.x,
+                    y: b1.y - 4,
+                    vx: Math.random() * 300 - 150,
+                    vy: -Math.random() * 400,
+                    weight: 1,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: 3,
+                    crater: 8,
+                    color: 0x1f3f1f,
+                    damage: 8,
+                    trailLength: b1.trailLength,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0,
+                    bounceCount: 0,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                  })).forEach((x) => balls.push(x)),
+              })),
+            ),
+        },
+      ],
+    },
+    recursiveshrapnel: {
+      pt: 200,
+      name: "Recursive Shrapnel",
+      group: "grenades",
+      bullets: [
+        {
+          id: "recursiveshrapnel",
+          damage: 65,
+          range: 0.625,
+          spawnMines: false,
+          weight: 1,
+          radius: 6,
+          crater: 36,
+          color: 0x003f00,
+          trailLength: 54,
+          bounce: 0.5,
+          bounceCount: 150,
+          onexplode: (b) => {
+            Array.from({ length: 15 }, (_) => ({
+              shotId: b.shotId,
+              localId: `recursiveshrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x,
+              y: b.y - 4,
+              vx: Math.random() * 400 - 200,
+              vy: -Math.random() * 600,
+              weight: 1,
+              gravity: PROJECTILE_GRAVITY,
+              radius: 3,
+              crater: 9,
+              color: 0x2f5f2f,
+              damage: 5,
+              trailLength: b.trailLength,
+              trail: [],
+              age: 0,
+              dead: false,
+              bounce: 0.75,
+              bounceCount: 75,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+              onexplode: (b0) =>
+                Array.from({ length: 5 }, (_) => ({
+                  shotId: b0.shotId,
+                  localId: `shrapnel_child_child${Date.now()}_${crypto.randomUUID()}`,
+                  parentLocalId: null,
+                  orbit: null,
+                  x: b0.x,
+                  y: b0.y - 4,
+                  vx: Math.random() * 400 - 200,
+                  vy: -Math.random() * 600,
+                  weight: 1,
+                  gravity: PROJECTILE_GRAVITY,
+                  radius: 2,
+                  crater: 6,
+                  color: 0x2f3f2f,
+                  damage: 3,
+                  trailLength: b0.trailLength,
+                  trail: [],
+                  age: 0,
+                  dead: false,
+                  bounce: 0,
+                  bounceCount: 0,
+                  mineGroup: [],
+                  spawnMines: false,
+                  isStaticMine: false,
+                  terrainArmed: true,
+                })).forEach((x) => balls.push(x)),
+            })).forEach((x) => balls.push(x));
+          },
+        },
+      ],
+    },
+    shrapnelcluster: {
+      pt: 120,
+      name: "Shrapnel Cluster",
+      bullets: [],
+      group: "grenades",
+    },
+    shrapnelfireworks: {
+      pt: 140,
+      name: "Shrapnel Fireworks",
+      group: "grenades",
+      bullets: [
+        {
+          id: "shrapnelfireworks",
+          damage: 0,
+          range: 1,
+          spawnMines: false,
+          weight: 1,
+          radius: 8,
+          crater: 0,
+          color: 0x3fbf3f,
+          trailLength: 108,
+          bounce: 0.75,
+          bounceCount: 100,
+          onexplode: (b) =>
+            balls.push({
+              shotId: b.shotId,
+              localId: `shrapnelfireworks_child_${Date.now()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x,
+              y: b.y - 4,
+              vx: 0,
+              vy: -400,
+              weight: 0.5,
+              gravity: PROJECTILE_GRAVITY,
+              radius: b.radius,
+              crater: 0,
+              color: b.color,
+              damage: 0,
+              trailLength: b.trailLength,
+              trail: [],
+              age: 0,
+              dead: false,
+              bounce: 0,
+              bounceCount: 0,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+              ontick: (b0) => {
+                if (b0.vy > 0) {
+                  b0.dead = true;
+                  const amt = 16;
+                  for (let i = 0; i < amt; i++)
+                    balls.push({
+                      shotId: b0.shotId,
+                      localId: `shrapnelfireworks_burst_${Date.now()}_${i}`,
+                      parentLocalId: null,
+                      orbit: null,
+                      x: b0.x,
+                      y: b0.y,
+                      vx: Math.cos((i / amt) * 2 * Math.PI) * 200,
+                      vy: Math.sin((i / amt) * 2 * Math.PI) * 200,
+                      weight: 1,
+                      gravity: PROJECTILE_GRAVITY,
+                      radius: 5,
+                      crater: 14,
+                      color: 0x1f5f1f,
+                      damage: 14,
+                      trailLength: 54,
+                      trail: [],
+                      age: 0,
+                      dead: false,
+                      bounce: 0.75,
+                      bounceCount: 100,
+                      mineGroup: [],
+                      spawnMines: false,
+                      isStaticMine: false,
+                      terrainArmed: true,
+                      onexplode: (b1) =>
+                        Array.from({ length: 8 }, (_) => ({
+                          shotId: b1.shotId,
+                          localId: `shrapnelfireworks_child_${Date.now()}_${crypto.randomUUID()}`,
+                          parentLocalId: null,
+                          orbit: null,
+                          x: b1.x,
+                          y: b1.y - 4,
+                          vx: Math.random() * 300 - 150,
+                          vy: -Math.random() * 400,
+                          weight: 1,
+                          gravity: PROJECTILE_GRAVITY,
+                          radius: 3,
+                          crater: 8,
+                          color: 0x1f3f1f,
+                          damage: 8,
+                          trailLength: b1.trailLength,
+                          trail: [],
+                          age: 0,
+                          dead: false,
+                          bounce: 0,
+                          bounceCount: 0,
+                          mineGroup: [],
+                          spawnMines: false,
+                          isStaticMine: false,
+                          terrainArmed: true,
+                        })).forEach((x) => balls.push(x)),
+                    });
+                }
+              },
+            }),
+        },
+      ],
+    },
+    grenadedropper: {
+      pt: 80,
+      name: "Grenade Dropper",
+      group: "grenades",
+      bullets: [
+        {
+          id: "grenadedropper",
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 30,
+          color: 0x3f9f3f,
+          trailLength: 54,
+          bounce: 0,
+          bounceCount: 0,
+          ontick: (b) =>
+            b.age > 0.25
+              ? ((_) => {
+                  b.age = 0;
+                  balls.push({
+                    shotId: b.shotId,
+                    localId: `child_${Date.now()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b.x,
+                    y: b.y,
+                    vx: b.vx * 0.1,
+                    vy: 0,
+                    weight: 1,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: 6,
+                    crater: 36,
+                    color: 0x007f00,
+                    damage: 80,
+                    trailLength: 54,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0.6,
+                    bounceCount: 100,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                  });
+                })()
+              : 0,
+        },
+      ],
+    },
+    shrapneldropper: {
+      pt: 110,
+      name: "Shrapnel Dropper",
+      group: "grenades",
+      bullets: [
+        {
+          id: "shrapneldropper",
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 30,
+          color: 0x1f7f1f,
+          trailLength: 54,
+          bounce: 0,
+          bounceCount: 0,
+          ontick: (b) =>
+            b.age > 0.25
+              ? ((_) => {
+                  b.age = 0;
+                  balls.push({
+                    shotId: b.shotId,
+                    localId: `child_${Date.now()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b.x,
+                    y: b.y,
+                    vx: b.vx * 0.1,
+                    vy: 0,
+                    weight: 1,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: 8,
+                    crater: 42,
+                    color: 0x005f00,
+                    damage: 75,
+                    trailLength: 54,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0.5,
+                    bounceCount: 100,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                    onexplode: (b0) =>
+                      Array.from({ length: 20 }, (_) => ({
+                        shotId: b0.shotId,
+                        localId: `shrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+                        parentLocalId: null,
+                        orbit: null,
+                        x: b0.x,
+                        y: b0.y - 4,
+                        vx: Math.random() * 400 - 200,
+                        vy: -Math.random() * 600,
+                        weight: 1,
+                        gravity: PROJECTILE_GRAVITY,
+                        radius: 4,
+                        crater: 12,
+                        color: 0x1f3f1f,
+                        damage: 12,
+                        trailLength: 54,
+                        trail: [],
+                        age: 0,
+                        dead: false,
+                        bounce: 0,
+                        bounceCount: 0,
+                        mineGroup: [],
+                        spawnMines: false,
+                        isStaticMine: false,
+                        terrainArmed: true,
+                      })).forEach((x) => balls.push(x)),
+                  });
+                })()
+              : 0,
+        },
+      ],
+    },
+    grenadecluster: {
+      pt: 80,
+      name: "Grenade Cluster",
+      bullets: [],
+      group: "grenades",
+    },
+    grenadefireworks: {
+      pt: 100,
+      name: "Grenade Fireworks",
+      group: "grenades",
+      onexplode: (b) =>
+        balls.push({
+          shotId: b.shotId,
+          localId: `child_${Date.now()}`,
+          parentLocalId: null,
+          orbit: null,
+          x: b.x,
+          y: b.y,
+          vx: 0,
+          vy: -400,
+          weight: 1,
+          gravity: PROJECTILE_GRAVITY,
+          radius: 6,
+          crater: 18,
+          color: 0xff4400,
+          damage: 30,
+          trailLength: 34,
+          trail: [],
+          age: 0,
+          dead: false,
+          bounce: 0,
+          bounceCount: 0,
+          mineGroup: [],
+          spawnMines: false,
+          isStaticMine: false,
+          terrainArmed: true,
+        }),
+      bullets: [
+        {
+          id: "grenadefireworks",
+          damage: 0,
+          range: 1,
+          spawnMines: false,
+          weight: 1,
+          radius: 8,
+          crater: 0,
+          color: 0x7fff7f,
+          trailLength: 108,
+          bounce: 0.75,
+          bounceCount: 100,
+          onexplode: (b) =>
+            balls.push({
+              shotId: b.shotId,
+              localId: `grenadefireworks_child_${Date.now()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x,
+              y: b.y - 4,
+              vx: 0,
+              vy: -400,
+              weight: 0.5,
+              gravity: PROJECTILE_GRAVITY,
+              radius: b.radius,
+              crater: 0,
+              color: b.color,
+              damage: 30,
+              trailLength: b.trailLength,
+              trail: [],
+              age: 0,
+              dead: false,
+              bounce: 0,
+              bounceCount: 0,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+              ontick: (b0) => {
+                if (b0.vy > 0) {
+                  b0.dead = true;
+                  const amt = 16;
+                  for (let i = 0; i < amt; i++)
+                    balls.push({
+                      id: "grenadecluster" + i,
+                      shotId: b0.shotId,
+                      localId: `fireworks_child_child_${Date.now()}`,
+                      parentLocalId: null,
+                      orbit: null,
+                      x: b0.x,
+                      y: b0.y,
+                      vx: Math.cos((i / amt) * 2 * Math.PI) * 150,
+                      vy: Math.sin((i / amt) * 2 * Math.PI) * 150,
+                      weight: 0.625,
+                      gravity: PROJECTILE_GRAVITY,
+                      radius: 6,
+                      crater: 24,
+                      color: 0x007f00,
+                      damage: 40,
+                      trailLength: 54,
+                      trail: [],
+                      age: 0,
+                      dead: false,
+                      bounce: 0.75,
+                      bounceCount: 100,
+                      mineGroup: [],
+                      spawnMines: false,
+                      isStaticMine: false,
+                      terrainArmed: true,
+                    });
+                }
+              },
+            }),
+        },
+      ],
+    },
+    fireworks: {
+      pt: 60,
+      name: "Fireworks",
+      group: "fireworks",
+      onexplode: (b) =>
+        balls.push({
+          shotId: b.shotId,
+          localId: `child_${Date.now()}`,
+          parentLocalId: null,
+          orbit: null,
+          x: b.x,
+          y: b.y,
+          vx: 0,
+          vy: -400,
+          weight: 1,
+          gravity: PROJECTILE_GRAVITY,
+          radius: 6,
+          crater: 18,
+          color: 0xff4400,
+          damage: 30,
+          trailLength: 34,
+          trail: [],
+          age: 0,
+          dead: false,
+          bounce: 0,
+          bounceCount: 0,
+          mineGroup: [],
+          spawnMines: false,
+          isStaticMine: false,
+          terrainArmed: true,
+        }),
+      bullets: [
+        {
+          id: "fireworks",
+          damage: 0,
+          range: 1,
+          spawnMines: false,
+          weight: 1,
+          radius: 8,
+          crater: 0,
+          color: 0xffff7f,
+          trailLength: 108,
+          bounce: 0.75,
+          bounceCount: 100,
+          onexplode: (b) =>
+            balls.push({
+              shotId: b.shotId,
+              localId: `fireworks_child_${Date.now()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x,
+              y: b.y - 4,
+              vx: 0,
+              vy: -400,
+              weight: 0.5,
+              gravity: PROJECTILE_GRAVITY,
+              radius: b.radius,
+              crater: 0,
+              color: b.color,
+              damage: 30,
+              trailLength: b.trailLength,
+              trail: b.trail,
+              age: 0,
+              dead: false,
+              bounce: 0,
+              bounceCount: 0,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+              ontick: (b0) => {
+                if (b0.vy > 0) {
+                  b0.dead = true;
+                  const amt = 16;
+                  for (let i = 0; i < amt; i++)
+                    balls.push({
+                      shotId: b0.shotId,
+                      localId: `fireworks_child_child_${Date.now()}`,
+                      parentLocalId: null,
+                      orbit: null,
+                      x: b0.x,
+                      y: b0.y,
+                      vx: Math.cos((i / amt) * 2 * Math.PI) * 300,
+                      vy: Math.sin((i / amt) * 2 * Math.PI) * 300,
+                      weight: 1,
+                      gravity: PROJECTILE_GRAVITY,
+                      radius: b0.radius / 1.5,
+                      crater: 16,
+                      color: b0.color,
+                      damage: 30,
+                      trailLength: b0.trailLength,
+                      trail: [],
+                      age: 0,
+                      dead: false,
+                      bounce: 0,
+                      bounceCount: 0,
+                      mineGroup: [],
+                      spawnMines: false,
+                      isStaticMine: false,
+                      terrainArmed: true,
+                    });
+                }
+              },
+            }),
+        },
+      ],
+    },
+    ceriumbomb: {
+      pt: 200,
+      name: "Cerium bomb",
+      group: "fireworks",
+      onexplode: (b) =>
+        balls.push({
+          shotId: b.shotId,
+          localId: `child_${Date.now()}`,
+          parentLocalId: null,
+          orbit: null,
+          x: b.x,
+          y: b.y,
+          vx: 0,
+          vy: -500,
+          weight: 1,
+          gravity: PROJECTILE_GRAVITY,
+          radius: 6,
+          crater: 18,
+          color: 0xff4400,
+          damage: 30,
+          trailLength: 34,
+          trail: [],
+          age: 0,
+          dead: false,
+          bounce: 0,
+          bounceCount: 0,
+          mineGroup: [],
+          spawnMines: false,
+          isStaticMine: false,
+          terrainArmed: true,
+        }),
+      bullets: [
+        {
+          id: "ceriumbomb",
+          damage: 0,
+          range: 1,
+          spawnMines: false,
+          weight: 1,
+          radius: 12,
+          crater: 0,
+          color: 0xffffbf,
+          trailLength: 108,
+          bounce: 0.75,
+          bounceCount: 150,
+          onexplode: (b) =>
+            balls.push({
+              shotId: b.shotId,
+              localId: `ceriumbomb_child_${Date.now()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x,
+              y: b.y - 4,
+              vx: 0,
+              vy: -500,
+              weight: 0.5,
+              gravity: PROJECTILE_GRAVITY,
+              radius: b.radius,
+              crater: 0,
+              color: b.color,
+              damage: 30,
+              trailLength: b.trailLength,
+              trail: [],
+              age: 0,
+              dead: false,
+              bounce: 0,
+              bounceCount: 0,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+              ontick: (b0) => {
+                if (b0.vy > 0) {
+                  b0.dead = true;
+                  const amt = 12;
+                  for (let i = 0; i < amt; i++)
+                    balls.push({
+                      shotId: b0.shotId,
+                      localId: `ceriumbomb_child_child_${Date.now()}`,
+                      parentLocalId: null,
+                      orbit: null,
+                      x: b0.x,
+                      y: b0.y,
+                      vx: Math.cos((i / amt) * 2 * Math.PI) * 400,
+                      vy: Math.sin((i / amt) * 2 * Math.PI) * 400,
+                      weight: 1,
+                      gravity: PROJECTILE_GRAVITY,
+                      radius: b0.radius / 1.5,
+                      crater: i % 2 ? 24 : 0,
+                      color: i % 2 ? b0.color : 0xffffff,
+                      damage: i % 2 ? 42 : 0,
+                      trailLength: b0.trailLength,
+                      trail: [],
+                      age: 0,
+                      dead: false,
+                      bounce: 0,
+                      bounceCount: 0,
+                      mineGroup: [],
+                      spawnMines: false,
+                      isStaticMine: false,
+                      terrainArmed: true,
+                      ontick: (b1) => {
+                        if (i % 2) return;
+                        if (b1.age > 0.5) {
+                          b1.dead = true;
+                          const amt2 = 8;
+                          for (let j = 0; j < amt2; j++)
+                            balls.push({
+                              shotId: b1.shotId,
+                              localId: `ceriumbomb_child_child_child_${Date.now()}`,
+                              parentLocalId: null,
+                              orbit: null,
+                              x: b1.x,
+                              y: b1.y,
+                              vx:
+                                Math.cos((j / amt2) * 2 * Math.PI) * 300,
+                              vy:
+                                Math.sin((j / amt2) * 2 * Math.PI) * 300,
+                              weight: 1,
+                              gravity: PROJECTILE_GRAVITY,
+                              radius: b1.radius / 1.5,
+                              crater: 18,
+                              color: b1.color,
+                              damage: 30,
+                              trailLength: b1.trailLength,
+                              trail: [],
+                              age: 0,
+                              dead: false,
+                              bounce: 0,
+                              bounceCount: 0,
+                              mineGroup: [],
+                              spawnMines: false,
+                              isStaticMine: false,
+                              terrainArmed: true,
+                            });
+                        }
+                      },
+                    });
+                }
+              },
+            }),
+        },
+      ],
+    },
+    bore: {
+      pt: 75,
+      name: "Bore",
+      group: "cluster",
+      bullets: Array.from({ length: 10 }, (_, i) => ({
+        id: "bore",
+        damage: 10,
+        range: 1,
+        spawnMines: false,
+        weight: 1,
+        radius: 5,
+        crater: 10,
+        color: 0xff7f00,
+        trailLength: 54,
+        delay: i / 60,
+      })),
+    },
+    string: {
+      pt: 60,
+      name: "String",
+      group: "cluster",
+      bullets: Array.from({ length: 10 }, (_, i) => ({
+        id: "bore",
+        damage: 4,
+        range: 1,
+        spawnMines: false,
+        weight: 1,
+        radius: 1,
+        crater: 5,
+        color: 0xffff00,
+        trailLength: 54,
+        delay: i / 60,
+      })),
+    },
+    powershot: {
+      pt: 40,
+      name: "Powershot",
+      group: "power",
+      bullets: [
+        {
+          id: "main",
+          damage: 50,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 20,
+          color: 0xffffff,
+          trailLength: 54,
+        },
+        {
+          id: "secondairy0",
+          orbit: { radius: 30, speed: 20, phase: 0 },
+          parent: "main",
+          damage: 20,
+          range: 1,
+          weight: 1,
+          radius: 3,
+          crater: 7,
+          color: 0xffffff,
+          trailLength: 54,
+          terrainArmed: false,
+        },
+        {
+          id: "secondairy1",
+          orbit: { radius: 30, speed: 20, phase: Math.PI },
+          parent: "main",
+          damage: 20,
+          range: 1,
+          weight: 0,
+          radius: 3,
+          crater: 7,
+          color: 0xffffff,
+          trailLength: 54,
+          terrainArmed: false,
+        },
+      ],
+    },
+    energyshot: {
+      pt: 250,
+      name: "Energyshot",
+      group: "power",
+      bullets: [
+        {
+          id: "main",
+          damage: 50,
+          range: 1,
+          weight: 1.25,
+          radius: 16,
+          crater: 20,
+          color: 0xbfffff,
+          trailLength: 54,
+          terrainArmed: false,
+        },
+        ...Array(4)
+          .fill(0)
+          .map((_, i) => ({
+            id: "secondairy" + i,
+            orbit: { radius: 27, speed: 30, phase: (i * Math.PI) / 2 },
+            parent: "main",
+            damage: 24,
+            range: 1,
+            weight: 1,
+            radius: 5,
+            crater: 7,
+            color: 0xffffff,
+            trailLength: 54,
+            terrainArmed: false,
+          })),
+        ...Array(8)
+          .fill(0)
+          .map((_, i) => ({
+            id: "secondairy" + (i + 4),
+            orbit: {
+              radius: 50,
+              speed: -10,
+              phase: ((i - 2) * Math.PI) / 4,
+            },
+            parent: "main",
+            damage: 16,
+            range: 1,
+            weight: 1,
+            radius: 3,
+            crater: 5,
+            color: 0xffffff,
+            trailLength: 54,
+            terrainArmed: false,
+          })),
+      ],
+    },
+    sniper: {
+      pt: 30,
+      name: "Sniper",
+      group: "snipers",
+      bullets: [
+        {
+          id: "sniper",
+          damage: 0,
+          range: 1,
+          weight: 1,
+          radius: 1,
+          crater: 1,
+          color: 0xbfbfbf,
+          trailLength: 104,
+          ontick: (b) => (b.damage += 0.25),
+        },
+      ],
+    },
+    floater: {
+      pt: 45,
+      name: "Floater",
+      group: "snipers",
+      bullets: [
+        {
+          id: "floater",
+          damage: 0,
+          range: 1,
+          weight: 1,
+          radius: 1,
+          crater: 1,
+          color: 0xbfbfbf,
+          trailLength: 104,
+          ontick: (b) => {
+            b.damage += 0.25;
+            if (b.vy > 0) {
+              b.vy = 0;
+              b.gravity = 0;
+            }
+          },
+        },
+      ],
+    },
+    dropper: {
+      pt: 50,
+      name: "Dropper",
+      group: "droppers",
+      bullets: [
+        {
+          id: "dropper",
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 30,
+          color: 0xffbf7f,
+          trailLength: 54,
+          ontick: (b) =>
+            b.age > 0.2
+              ? ((_) => {
+                  b.age = 0;
+                  balls.push({
+                    shotId: b.shotId,
+                    localId: `child_${Date.now()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b.x,
+                    y: b.y,
+                    vx: 0,
+                    vy: 0,
+                    weight: 1,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: 6,
+                    crater: 18,
+                    color: b.color,
+                    damage: 18,
+                    trailLength: 54,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0,
+                    bounceCount: 0,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                  });
+                })()
+              : 0,
+        },
+      ],
+    },
+    delivery: {
+      pt: 50,
+      name: "Delivery",
+      group: "droppers",
+      bullets: [
+        {
+          id: "delivery",
+          damage: 40,
+          range: 1,
+          weight: 1,
+          radius: 12,
+          crater: 36,
+          color: 0xff7f3f,
+          trailLength: 54,
+          ontick: (b) =>
+            b.age > 0.15
+              ? ((_) => {
+                  b.age = 0;
+                  balls.push({
+                    shotId: b.shotId,
+                    localId: `child_${Date.now()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b.x,
+                    y: b.y,
+                    vx: 0,
+                    vy: 0,
+                    weight: 1,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: 4,
+                    crater: 12,
+                    color: b.color,
+                    damage: 12,
+                    trailLength: 54,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0,
+                    bounceCount: 0,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                  });
+                })()
+              : 0,
+        },
+      ],
+    },
+    distort: {
+      pt: 70,
+      name: "Distort",
+      group: "glitch",
+      bullets: [
+        {
+          id: `distort_${Date.now()}`,
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 10,
+          crater: 30,
+          color: 0xffffff,
+          trailLength: 54,
+          ontick: (b) => {
+            b.x += Math.random() * 16 - 8;
+            b.y += Math.random() * 16 - 8;
+            const ch = (_) =>
+              Math.floor(Math.random() * 4 + 12).toString(16);
+            b.color = parseInt(
+              `${ch()}${ch()}${ch()}${ch()}${ch()}${ch()}`,
+              16,
+            );
+            if (Math.random() < 0.025)
+              balls.push({
+                shotId: b.shotId,
+                localId: `child_${Date.now()}`,
+                parentLocalId: null,
+                orbit: null,
+                x: b.x,
+                y: b.y,
+                vx: b.vx,
+                vy: b.vy,
+                weight: b.weight,
+                gravity: PROJECTILE_GRAVITY,
+                radius: b.radius,
+                crater: b.crater,
+                color: 0xffffff,
+                damage: b.damage,
+                trailLength: b.trailLength,
+                trail: [],
+                age: 0,
+                dead: false,
+                bounce: 0,
+                bounceCount: 0,
+                mineGroup: [],
+                spawnMines: false,
+                isStaticMine: false,
+                terrainArmed: true,
+                ontick: (b0) => {
+                  b0.x += Math.random() * 16 - 8;
+                  b0.y += Math.random() * 16 - 8;
+                  const ch = (_) =>
+                    Math.floor(Math.random() * 4 + 12).toString(16);
+                  b0.color = parseInt(
+                    `${ch()}${ch()}${ch()}${ch()}${ch()}${ch()}`,
+                    16,
+                  );
+                },
+              });
+          },
+        },
+      ],
+    },
+    bar: {
+      pt: 50,
+      name: "Bar",
+      group: "bars",
+      bullets: [
+        {
+          id: "bar",
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 8,
+          crater: 0,
+          color: 0xff0000,
+          trailLength: 54,
+          onexplode: (b) => {
+            applyRectExplosionDamage(b.x - 30, 0, b.x + 30, GAME_H, 20);
+            b.isRect = true;
+            b.rectW = 40;
+            b.rectH = GAME_H;
+          },
+        },
+      ],
+    },
+    horizon: {
+      pt: 150,
+      name: "Horizon",
+      group: "bars",
+      bullets: [
+        {
+          id: "horizon",
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 8,
+          crater: 0,
+          color: 0xff0000,
+          trailLength: 54,
+          onexplode: (b) => {
+            applyRectExplosionDamage(0, b.y + 30, GAME_W, b.y - 30, 20);
+            b.isRect = true;
+            b.rectW = 40;
+            b.rectH = GAME_H;
+          },
+        },
+      ],
+    },
+    serialbar: {
+      pt: 0,
+      name: "Serial bar",
+      group: "bars",
+      bullets: [
+        {
+          id: "serialbar",
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 8,
+          crater: 0,
+          color: 0xff0000,
+          trailLength: 54,
+          onexplode: (b) => {
+            for (let i = 0; i < 3; i++)
+              setTimeout((_) => {
+                applyRectExplosionDamage(
+                  b.x - 30 + i * 120,
+                  0,
+                  b.x + 30 + i * 120,
+                  GAME_H,
+                  20,
+                );
+                if (i)
+                  applyRectExplosionDamage(
+                    b.x + 30 - i * 120,
+                    0,
+                    b.x - 30 - i * 120,
+                    GAME_H,
+                    20,
+                  );
+              }, i * 240);
+          },
+        },
+      ],
+    },
+    serialhorizon: {
+      pt: 0,
+      name: "Serial horizon",
+      group: "bars",
+      bullets: [
+        {
+          id: "serialhorizon",
+          damage: 30,
+          range: 1,
+          weight: 1,
+          radius: 8,
+          crater: 0,
+          color: 0xff0000,
+          trailLength: 54,
+          onexplode: (b) => {
+            for (let i = 0; i < 3; i++)
+              setTimeout((_) => {
+                applyRectExplosionDamage(
+                  0,
+                  b.y - 30 + i * 120,
+                  GAME_W,
+                  b.y + 30 + i * 120,
+                  20,
+                );
+                if (i)
+                  applyRectExplosionDamage(
+                    0,
+                    b.y + 30 - i * 120,
+                    GAME_W,
+                    b.y - 30 - i * 120,
+                    20,
+                  );
+              }, i * 240);
+          },
+        },
+      ],
+    },
+    stream: {
+      pt: 100,
+      name: "Stream",
+      group: "stream",
+      bullets: Array.from({ length: 10 }, (_, i) => ({
+        id: "stream_" + crypto.randomUUID(),
+        damage: 25 - i * 2,
+        range: 1.5 - i / 10,
+        weight: 1,
+        radius: 8 - i / 2,
+        crater: 24 - (3 * i) / 2,
+        color: 0xffbf7f,
+        trailLength: 54,
+        delay: -i / 10 + 1,
+        terrainArmed: false,
+      })),
+    },
+    sinewave: {
+      pt: 80,
+      name: "Sinewave",
+      group: "math",
+      bullets: Array.from({ length: 50 }, (_, i) => ({
+        id: "sinewave_" + crypto.randomUUID(),
+        damage: 3,
+        range: 1,
+        weight: 1,
+        radius: 3,
+        crater: 9,
+        color: 0x7fffbf,
+        trailLength: 54,
+        delay: i / 30,
+        offset: 10 * Math.sin(i / 5) - 5,
+        terrainArmed: false,
+      })),
+    },
+    cosinewave: {
+      pt: 80,
+      name: "Cosinewave",
+      group: "math",
+      bullets: Array.from({ length: 50 }, (_, i) => ({
+        id: "cosinewave_" + crypto.randomUUID(),
+        damage: 3,
+        range: 1,
+        weight: 1,
+        radius: 3,
+        crater: 9,
+        color: 0x7fff7f,
+        trailLength: 54,
+        delay: i / 30,
+        offset: 10 * Math.cos(i / 5) - 5,
+        terrainArmed: false,
+      })),
+    },
+    arctangent: {
+      pt: 85,
+      name: "Arctangent",
+      group: "math",
+      bullets: Array.from({ length: 50 }, (_, i) => ({
+        id: "arctangent_" + crypto.randomUUID(),
+        damage: 3,
+        range: 1,
+        weight: 1,
+        radius: 3,
+        crater: 9,
+        color: 0xffbf7f,
+        trailLength: 54,
+        delay: i / 30,
+        offset: 10 * Math.atan(i / 5 - 5) - 5,
+        terrainArmed: false,
+      })),
+    },
+  },
+  tree = {
+    single: ["double", "moon"],
+    double: ["triple"],
+    triple: ["quadruple"],
+    quadruple: ["quintuple", "shotgun"],
+    shotgun: ["rifle"],
+    rifle: ["railgun", "bore"],
+    railgun: ["sinewave", "cosinewave", "stream"],
+    sinewave: ["arctangent"],
+    cosinewave: ["arctangent"],
+    bore: ["string", "cluster"],
+    cluster: ["shrapnelcluster", "grenadecluster"],
+    stream: ["dropper"],
+    dropper: ["delivery", "grenadedropper", "shrapneldropper"],
+    moon: ["earth", "sniper"],
+    sniper: ["floater"],
+    earth: ["sun", "powershot", "landmine"],
+    sun: ["galaxy", "bar"],
+    bar: ["serialbar", "horizon"],
+    horizon: ["serialhorizon"],
+    powershot: ["energyshot", "distort"],
+    landmine: ["grenade", "nuke", "fireworks"],
+    grenade: [
+      "shrapnel",
+      "grenaderain",
+      "grenadecluster",
+      "grenadefireworks",
+      "grenadedropper",
+    ],
+    shrapnel: [
+      "recursiveshrapnel",
+      "shrapnelrain",
+      "shrapnelcluster",
+      "shrapnelfireworks",
+      "shrapneldropper",
+    ],
+    fireworks: ["ceriumbomb", "rain"],
+    rain: ["shrapnelrain", "grenaderain"],
+  };
+
+for (let i = 0; i < 10; i++) {
+  attacks.grenadecluster.bullets.push({
+    id: "grenadecluster" + i,
+    damage: 40,
+    range: 1 + Math.random() / 5,
+    weight: 1 + Math.random() / 5,
+    radius: 6,
+    crater: 24,
+    color: 0x00bf00,
+    bounce: 0.75,
+    bounceCount: 100,
+    spawnMines: false,
+    trailLength: 54,
+    offset: Math.random() * 10 - 5,
+  });
+}
+for (let i = 0; i < 10; i++) {
+  attacks.shrapnelcluster.bullets.push({
+    id: "shrapnelcluster" + i,
+    damage: 75,
+    radius: 8,
+    crater: 42,
+    color: 0x005f00,
+    bounce: 0.5,
+    bounceCount: 50,
+    spawnMines: false,
+    trailLength: 54,
+    range: 0.9 + Math.random() * 0.3,
+    weight: 0.7 + Math.random() * 0.3,
+    offset: Math.random() * 10 - 5,
+    onexplode: (b) =>
+      Array.from({ length: 12 }, (_) => ({
+        shotId: b.shotId,
+        localId: `sc_child_${Date.now()}_${crypto.randomUUID()}`,
+        parentLocalId: null,
+        orbit: null,
+        x: b.x,
+        y: b.y - 4,
+        vx: Math.random() * 400 - 200,
+        vy: -Math.random() * 600,
+        weight: 1,
+        gravity: PROJECTILE_GRAVITY,
+        radius: 4,
+        crater: 12,
+        color: 0x1f3f1f,
+        damage: 12,
+        trailLength: 54,
+        trail: [],
+        age: 0,
+        dead: false,
+        bounce: 0,
+        bounceCount: 0,
+        mineGroup: [],
+        spawnMines: false,
+        isStaticMine: false,
+        terrainArmed: true,
+      })).forEach((x) => balls.push(x)),
+  });
+}
+for (let i = 0; i < 5; i++) {
+  attacks.beam.bullets.push({
+    id: "beam" + i,
+    damage: 6,
+    range: 1 - i / 6,
+    weight: 0,
+    radius: 4 - i / 2,
+    crater: 4 - i / 2,
+    color: (0xff << 16) | ((i * 40) << 8),
+    trailLength: 216,
+  });
+}
+for (let i = 0; i < 10; i++) {
+  let rand = 6 + Math.random() * 2;
+  attacks.cluster.bullets.push({
+    id: "cluster" + i,
+    damage: 6,
+    range: 1 + Math.random() / 5,
+    weight: 1 + Math.random() / 5,
+    radius: rand * 2 - 6,
+    crater: rand * 3 - 6,
+    color:
+      (0xff << 16) |
+      (Math.max(0, Math.min(255, Math.floor(5 * rand - 30))) << 8),
+    trailLength: 216,
+    offset: Math.random() * 10 - 5,
+  });
+}
+
+const multi = [
+  ["Double", 0xffff7f],
+  ["Triple", 0xffff00],
+  ["Quadruple", 0xff7f00],
+  ["Quintuple", 0xff0000],
+  ["Shotgun", 0x80ffff],
+  ["Rifle", 0x7fff7f],
+  ["Railgun", 0x7f7fff],
+];
+preset = (i) => ({
+  damage: 10 - i,
+  weight: 1 - i * 0.1,
+  radius: 10 - i * 1.4,
+  crater: 24 - i * 3.4,
+  color: multi[i][1],
+  trailLength: 54,
+});
+for (let i = 0; i < 7; i++) {
+  attacks[multi[i][0].toLowerCase()] = {
+    pt: i ** 0.625 * 20 + 20,
+    name: multi[i][0],
+    group: i < 4 ? "shots" : "stream",
+    bullets: Array(i + 2)
+      .fill()
+      .map((_, idx) => ({
+        id: `shot${idx}`,
+        damage: preset(i).damage,
+        weight: preset(i).weight,
+        radius: preset(i).radius,
+        crater: preset(i).crater,
+        color: preset(i).color,
+        range: i < 4 ? 1 : 1 - idx / (2 * i + 4),
+        trailLength: preset(i).trailLength,
+        offset: i < 4 ? (idx * 30) / (i + 2) : 0,
+      })),
+  };
+}
+
+const cosmos = [
+  ["moon", 0xd8d8ff, 3.5],
+  ["earth", 0x6fd7ff, 5.5],
+  ["sun", 0xffff7f, 8],
+  ["galaxy", 0x7f00ff, 16],
+];
+const cstat = (r) => ({
+  damage: Math.round(r * 1.4),
+  weight: Math.sqrt(r) - 1.5,
+  crater: Math.round(r * 1.5),
+  trailLength: 48,
+});
+const corbit = (pr, i) => ({
+  radius: pr * 5 + i * 10,
+  speed: 14 / (pr * 0.5),
+  phase: Math.PI,
+});
+for (let i = 0; i < cosmos.length; i++) {
+  attacks[cosmos[i][0]] = {
+    pt: Math.round((cosmos[i][2] / 1.65 + 2) ** 1.5),
+    name: cosmos[i][0][0].toUpperCase() + cosmos[i][0].slice(1),
+    group: "cosmos",
+    bullets: cosmos
+      .slice(0, i + 1)
+      .reverse()
+      .map(([id, , r], j) => ({
+        id,
+        color: cosmos.find(([cid]) => cid == id)[1],
+        radius: r,
+        ...cstat(r),
+        ...(j == 0
+          ? { range: 1 }
+          : {
+              parent: cosmos.slice(0, i + 1).reverse()[j - 1][0],
+              orbit: corbit(
+                cosmos.slice(0, i + 1).reverse()[j - 1][2],
+                j,
+              ),
+            }),
+      })),
+  };
+}
+
+clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
+degToRad = (d) => (d * Math.PI) / 180;
+
+function rotateVector(x, y, a) {
+  const s = Math.sin(a),
+    c = Math.cos(a);
+  return { x: x * c - y * s, y: x * s + y * c };
+}
+function colorToCss(c) {
+  if (typeof c == "string") return c;
+  return `#${Number(c || 0xffffff)
+    .toString(16)
+    .padStart(6, "0")}`;
+}
+function colorToRgba(c, a) {
+  if (typeof c == "number") {
+    const r = (c >> 16) & 255,
+      g = (c >> 8) & 255,
+      b = c & 255;
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  if (typeof c == "string" && c.startsWith("#")) {
+    const cl = c.slice(1);
+    const v = parseInt(
+      cl.length == 3
+        ? cl
+            .split("")
+            .map((x) => x + x)
+            .join("")
+        : cl,
+      16,
+    );
+    if (!isNaN(v)) return colorToRgba(v, a);
+  }
+  return `rgba(255,255,255,${a})`;
+}
+function resolveNumber(v, fb, ctx2) {
+  const r = typeof v == "function" ? v(ctx2) : v;
+  return Number.isFinite(r) ? r : fb;
+}
+trimLabel = (t, m) =>
+  t.length <= m ? t : t.slice(0, Math.max(0, m - 1)) + ".";
+humanizeKey = (k) =>
+  k.replace(/[_-]+/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+
+function generateTerrain() {
+  const s = new Uint32Array(1);
+  crypto.getRandomValues(s);
+  seed = s[0];
+  terrain = [];
+  for (let x = 0; x < GAME_W; x++)
+    terrain.push(clamp(GROUND_Y + terrainf(x), GROUND_START, HUD_START));
+  if (gameMode != "freeplay" && gameMode != "practice") spawnPointOrbs();
+}
+
+function pickWeighted(table) {
+  let r = Math.random(),
+    cumulative = 0;
+  for (const entry of table) {
+    cumulative += entry.chance;
+    if (r < cumulative) return entry;
+  }
+  return table[table.length - 1];
+}
+
+// FIX 4: orbs can spawn anywhere ≥108 px from terrain and all 4 sides
+function spawnPointOrbs() {
+  const count = pickWeighted(ORB_COUNTS).n;
+  for (let i = 0; i < count; i++) {
+    const orb = pickWeighted(ORB_VALUES);
+    const radius = 30 * Math.sqrt(orb.chance);
+    const margin = 108;
+    const x =
+      margin + radius + Math.random() * (GAME_W - (margin + radius) * 2);
+    const terrainY = getTerrainY(x);
+    const minY = margin + radius;
+    const maxY = terrainY - margin - radius;
+    if (maxY < minY) continue;
+    const y = minY + Math.random() * (maxY - minY);
+    pointOrbs.push({ x, y, v: orb.v, color: orb.color, radius });
+  }
+}
+
+function getAttackPt(key) {
+  const pt = attacks[key]?.pt;
+  if (pt == undefined) {
+    console.warn(`Attack "${key}" has no pt defined, treating as 0`);
+    return 0;
+  }
+  return pt;
+}
+
+function getVisibleAttackList() {
+  const al = getAttackList(),
+    groupAnchors = new Map(),
+    noGroup = [];
+  for (const a of al) {
+    const atk = attacks[a.key],
+      group = atk?.group;
+    if (!group) {
+      noGroup.push(a);
+      continue;
+    }
+    if (!groupAnchors.has(group)) {
+      groupAnchors.set(group, a);
+    } else {
+      const existing = groupAnchors.get(group),
+        existingAtk = attacks[existing.key],
+        aPriority = atk?.priority ?? Infinity,
+        existingPriority = existingAtk?.priority ?? Infinity;
+      const anyHasPriority =
+        aPriority !== Infinity || existingPriority !== Infinity;
+      if (anyHasPriority) {
+        if (aPriority < existingPriority) groupAnchors.set(group, a);
+      } else {
+        const aPt = atk?.pt ?? 0,
+          existingPt = existingAtk?.pt ?? 0;
+        if (aPt < existingPt) {
+          groupAnchors.set(group, a);
+        } else if (aPt == existingPt) {
+          const ks = Object.keys(attacks);
+          if (ks.indexOf(a.key) < ks.indexOf(existing.key))
+            groupAnchors.set(group, a);
+        }
+      }
+    }
+  }
+  return [...groupAnchors.values(), ...noGroup];
+}
+
+getAttackGroup = (key) => attacks[key]?.group ?? null;
+getGroupSequence = (group) =>
+  getAttackList().filter((a) => attacks[a.key]?.group == group);
+
+function fitCanvas() {
+  const sc = Math.min(
+    window.innerWidth / GAME_W,
+    window.innerHeight / GAME_H,
+  );
+  canvas.style.width = GAME_W * sc + "px";
+  canvas.style.height = GAME_H * sc + "px";
+}
+function setMouseFromEvent(e) {
+  const r = canvas.getBoundingClientRect(),
+    sc = r.width / GAME_W || 1;
+  mouseX = (e.clientX - r.left) / sc;
+  mouseY = (e.clientY - r.top) / sc;
+}
+window.addEventListener("resize", fitCanvas);
+fitCanvas();
+
+window.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (!gameRunning || e.repeat) return;
+  if (k == "q") cycleAttack(-1);
+  if (k == "e") cycleAttack(1);
+  const n = Number(k);
+  if (Number.isInteger(n) && n > 0) selectAttack(n - 1);
+  if (e.key.altKey && e.key.toLowerCase() == "r" && !e.repeat) {
+    if (!mediaRecorder || mediaRecorder.state == "inactive")
+      startRecording();
+    else stopRecording();
+  }
+  if (k === "escape" && screen !== "menu" && screen !== "game")
+    navigateBack();
+  if (k == "w" || k == "s") {
+    const current = getSelectedAttack();
+    if (!current) return;
+    const group = attacks[current.key]?.group;
+    if (!group) return;
+    const seq = getGroupSequence(group);
+    pos = seq.findIndex((a) => a.key == current.key);
+    if (pos == -1) return;
+    const next =
+      k == "w"
+        ? seq[(pos + 1) % seq.length]
+        : seq[(pos - 1 + seq.length) % seq.length];
+    selectedAttackIndex = getAttackList().findIndex(
+      (a) => a.key == next.key,
+    );
+  }
+});
+window.addEventListener("keyup", (e) => {
+  keys[e.key.toLowerCase()] = false;
+});
+canvas.addEventListener("mousemove", setMouseFromEvent);
+
+function getTerrainCollisionInfo(b) {
+  if (!b || b.dead || b.x < 0 || b.x >= terrain.length) return null;
+  if (b.isStaticMine) return null;
+  if (b.terrainArmed == false) return null;
+  const ty = getTerrainY(b.x);
+  if (b.y + b.radius < ty) return null;
+  const xL = getTerrainY(clamp(b.x - 1, 0, terrain.length - 1)),
+    xR = getTerrainY(clamp(b.x + 1, 0, terrain.length - 1));
+  let nx = xL - xR,
+    ny = 2,
+    len = Math.hypot(nx, ny) || 1;
+  return { ty, nx: nx / len, ny: ny / len };
+}
+function getTerrainY(x) {
+  const cx = clamp(x, 0, terrain.length - 1),
+    l = Math.floor(cx),
+    r = Math.min(terrain.length - 1, l + 1),
+    t = cx - l;
+  return terrain[l] + (terrain[r] - terrain[l]) * t;
+}
+function getPlayerPosition(n) {
+  const x = n == 2 ? player2X : playerX;
+  return { x, y: getTerrainY(x) };
+}
+function isProjectileInsideTerrain(b) {
+  if (!b || b.x < 0 || b.x >= terrain.length) return false;
+  return b.y + b.radius >= getTerrainY(b.x);
+}
+
+function getAimData() {
+  const p = getPlayerPosition(currentPlayer),
+    dx = mouseX - p.x,
+    dy = mouseY - p.y,
+    dist = Math.hypot(dx, dy),
+    dirX = dist > 0.001 ? dx / dist : 0,
+    dirY = dist > 0.001 ? dy / dist : -1,
+    inputLen = Math.min(dist, MAX_AIM_INPUT_LENGTH),
+    drawLen = Math.min(dist, MAX_AIM_DRAW_LENGTH);
+  power = clamp(
+    (inputLen / MAX_AIM_INPUT_LENGTH) * POWER_MAX,
+    0,
+    POWER_MAX,
+  );
+  let angle = (Math.atan2(dirX, -dirY) * 180) / Math.PI;
+  if (angle > 180) angle -= 360;
+  if (angle <= -180) angle += 360;
+  return { player: p, dirX, dirY, drawLength: drawLen, power, angle };
+}
+
+function normalizeAttack(key, config) {
+  const src = Array.isArray(config) ? { bullets: config } : config,
+    bullets = src.bullets || src.projectiles || [src];
+  return {
+    key,
+    name: src.name || humanizeKey(key),
+    range: src.range ?? 1,
+    weight: src.weight ?? 1,
+    radius: src.radius ?? 8,
+    crater: src.crater ?? 18,
+    damage: src.damage ?? 10,
+    color: src.color ?? 0xffffff,
+    trailLength: src.trailLength ?? DEFAULT_TRAIL_LENGTH,
+    bullets,
+  };
+}
+function getAttackList() {
+  return Object.entries(attacks).map(([k, c]) => normalizeAttack(k, c));
+}
+function getSelectedAttack() {
+  const l = getAttackList();
+  if (!l.length) return null;
+  selectedAttackIndex = clamp(selectedAttackIndex, 0, l.length - 1);
+  return l[selectedAttackIndex];
+}
+function selectAttack(i) {
+  const l = getAttackList();
+  if (!l.length) return;
+  selectedAttackIndex = clamp(i, 0, l.length - 1);
+}
+function cycleAttack(d) {
+  const al = getAttackList(),
+    visible = getVisibleAttackList();
+  if (!visible.length) return;
+  const selectedKey = getSelectedAttack()?.key,
+    selectedGroup = attacks[selectedKey]?.group;
+  let cur = visible.findIndex(
+    (a) => a.key == selectedKey || attacks[a.key]?.group == selectedGroup,
+  );
+  if (cur == -1) cur = 0;
+  const next = visible[(cur + d + visible.length) % visible.length];
+  selectedAttackIndex = al.findIndex((a) => a.key == next.key);
+}
+
+function getAttackLayout() {
+  ctx.font = "16px monospace";
+  const cw = ctx.measureText("M").width || 10,
+    slotW = Math.ceil(cw * ATTACK_SLOT_CHARS + ATTACK_SLOT_PAD_X * 2),
+    sx = HUD_STATS_W,
+    aw = GAME_W - sx - 10,
+    cols = Math.max(
+      1,
+      Math.floor((aw + ATTACK_SLOT_GAP) / (slotW + ATTACK_SLOT_GAP)),
+    ),
+    totalRows = Math.ceil(getVisibleAttackList().length / cols),
+    contentH =
+      totalRows * ATTACK_SLOT_H +
+      Math.max(0, totalRows - 1) * ATTACK_SLOT_GAP,
+    sy = GAME_H - 4 - contentH;
+  return {
+    startX: sx,
+    startY: sy,
+    slotW,
+    columns: cols,
+    rows: totalRows,
+    capacity: cols * totalRows,
+  };
+}
+
+function movePlayerSmooth(d) {
+  playerProgress += d;
+  while (playerProgress >= 1) {
+    playerX++;
+    playerProgress -= 1;
+    if (playerX >= terrain.length - 1) {
+      playerX = terrain.length - 1;
+      playerProgress = 0;
+    }
+  }
+  while (playerProgress <= -1) {
+    playerX--;
+    playerProgress += 1;
+    if (playerX < 0) {
+      playerX = 0;
+      playerProgress = 0;
+    }
+  }
+}
+function movePlayer2Smooth(d) {
+  player2Progress += d;
+  while (player2Progress >= 1) {
+    player2X++;
+    player2Progress -= 1;
+    if (player2X >= terrain.length - 1) {
+      player2X = terrain.length - 1;
+      player2Progress = 0;
+    }
+  }
+  while (player2Progress <= -1) {
+    player2X--;
+    player2Progress += 1;
+    if (player2X < 0) {
+      player2X = 0;
+      player2Progress = 0;
+    }
+  }
+}
+
+function update() {
+  if (!gameRunning || gameOver) {
+    lastTime = Date.now();
+    return;
+  }
+  const now = Date.now(),
+    dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  if (turnActive && hasShot && balls.length == 0) {
+    turnTimer += dt;
+    if (turnTimer >= 1.0) endTurn();
+  }
+  let move = 0;
+  if (!hasShot && turnActive) {
+    if (keys["a"] || keys["arrowleft"]) move -= BASE_SPEED * dt;
+    if (keys["d"] || keys["arrowright"]) move += BASE_SPEED * dt;
+  }
+  if (move !== 0 && fuel > 0 && turnActive && !hasShot) {
+    fuel =
+      gameMode == "practice" || gameMode == "freeplay"
+        ? fuelMax
+        : Math.max(0, fuel - Math.abs(move) * 0.25);
+    if (currentPlayer == 1) movePlayerSmooth(move);
+    else movePlayer2Smooth(-move);
+  }
+  updateRectFlashes();
+  updateProjectiles(dt, now);
+  // FIX 3: fade out saved trails over time
+  for (let i = fadingTrails.length - 1; i >= 0; i--) {
+    fadingTrails[i].alpha -= dt * 1.5;
+    if (fadingTrails[i].alpha <= 0) fadingTrails.splice(i, 1);
+  }
+  updateCraters(now);
+  for (let i = pointOrbs.length - 1; i >= 0; i--) {
+    const o = pointOrbs[i],
+      p1 = getPlayerPosition(1),
+      p2 = getPlayerPosition(2),
+      activeP = currentPlayer == 1 ? p1 : p2;
+    if (
+      Math.hypot(activeP.x - o.x, activeP.y - o.y) <=
+      o.radius + PLAYER_RADIUS
+    ) {
+      points[currentPlayer - 1] += o.v;
+      pointOrbs.splice(i, 1);
+    }
+  }
+  if (
+    playerHealth <= 0 ||
+    (gameMode === "singledevice" && player2Health <= 0)
+  ) {
+    gameOver = true;
+    winner = playerHealth <= 0 ? 2 : 1;
+    setTimeout((_) => {
+      restartGame();
+      screen = "modeSelect";
+      screenHistory = [];
+    }, 3000);
+  }
+}
+
+function startTurn(n) {
+  currentPlayer =
+    gameMode == "freeplay" || gameMode == "practice" ? 1 : n;
+  turnActive = true;
+  hasShot = false;
+  fuel = fuelMax;
+  turnTimer = 0;
+  if (terrain.length && gameMode != "freeplay" && gameMode != "practice")
+    spawnPointOrbs();
+}
+function endTurn() {
+  turnActive = false;
+  startTurn(
+    (currentPlayer =
+      gameMode == "freeplay" || gameMode == "practice"
+        ? 1
+        : currentPlayer == 1
+          ? 2
+          : 1),
+  );
+}
+
+function updateProjectiles(dt, now) {
+  for (const b of balls) {
+    if (!b || b.dead) continue;
+    if (b.delay > 0) {
+      b.delay -= dt;
+      continue;
+    }
+    b.age += dt;
+    if (b.ontick) b.ontick(b, dt, now);
+    if (b.terrainArmed == false && b.y + b.radius < getTerrainY(b.x) - 2)
+      b.terrainArmed = true;
+    if (!b.parentLocalId || !b.orbit) {
+      b.vy += b.gravity * b.weight * dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+    }
+  }
+  for (const b of balls) {
+    if (!b || b.dead) continue;
+    for (let i = pointOrbs.length - 1; i >= 0; i--) {
+      const o = pointOrbs[i];
+      if (Math.hypot(b.x - o.x, b.y - o.y) <= b.radius + o.radius) {
+        points[currentPlayer - 1] += o.v;
+        pointOrbs.splice(i, 1);
+      }
+    }
+    if (b.parentLocalId && b.orbit) {
+      const parent = findProjectile(b.shotId, b.parentLocalId);
+      if (!parent || parent.dead) {
+        b.parentLocalId = null;
+        b.orbit = null;
+        continue;
+      }
+      const a = b.orbit.phase + b.age * b.orbit.speed;
+      b.x = parent.x + Math.sin(a) * b.orbit.radius;
+      b.y = parent.y + Math.cos(a) * b.orbit.radius;
+      b.vx = parent.vx + Math.cos(a) * b.orbit.radius * b.orbit.speed;
+      b.vy = parent.vy - Math.sin(a) * b.orbit.radius * b.orbit.speed;
+    }
+  }
+  for (const b of balls) {
+    if (!b || b.dead) continue;
+    pushTrail(b);
+  }
+
+  for (let i = balls.length - 1; i >= 0; i--) {
+    const b = balls[i];
+    if (!b || b.dead) continue;
+
+    if (isOutOfBounds(b)) {
+      // FIX 3: save the trail so it can keep fading on screen
+      if (b.trail && b.trail.length > 1)
+        fadingTrails.push({
+          trail: [...b.trail],
+          color: b.color,
+          radius: b.radius,
+          alpha: 1.0,
+        });
+      if (b.mineGroup && b.mineGroup.some((x) => x && !x.dead))
+        explodeProjectile(b, now);
+      else markProjectileDead(b);
+      continue;
+    }
+
+    const hit = resolveTerrainCollision(b);
+    if (hit) {
+      if (b.isStaticMine) continue;
+      // FIX 1: only bounce when actually moving into the terrain surface
+      const dot = b.vx * hit.nx + b.vy * hit.ny;
+      if (b.bounceCount > 0) {
+        if (dot > 0) bounceProjectile(b, hit, now);
+        // dot <= 0 means ball is leaving the slope — position was already corrected, skip reflection
+      } else {
+        explodeProjectile(b, now);
+      }
+      continue;
+    }
+
+    if (checksPlayerHit(b)) {
+      explodeProjectile(b, now);
+      continue;
+    }
+  }
+  balls = balls.filter((b) => !b?.dead);
+}
+
+function findProjectile(sid, lid) {
+  return balls.find((b) => b.shotId == sid && b.localId == lid);
+}
+function markProjectileDead(b) {
+  if (!b || b.dead) return;
+  b.dead = true;
+  for (const child of balls) {
+    if (child.shotId == b.shotId && child.parentLocalId == b.localId) {
+      child.parentLocalId = null;
+      child.orbit = null;
+    }
+  }
+}
+function pushTrail(b) {
+  if (b.trailLength <= 0) return;
+  b.trail.push({ x: b.x, y: b.y });
+  while (b.trail.length > b.trailLength) b.trail.shift();
+}
+function isOutOfBounds(b) {
+  return (
+    b.x < -b.radius ||
+    b.x > GAME_W + b.radius ||
+    b.y < -GAME_H ||
+    b.y > GAME_H + b.radius
+  );
+}
+function hitsTerrain(b) {
+  const hit = getTerrainCollisionInfo(b);
+  return !!hit && b.vy > 0;
+}
+function resolveTerrainCollision(b) {
+  const hit = getTerrainCollisionInfo(b);
+  if (!hit) return null;
+  b.y = hit.ty - b.radius;
+  return hit;
+}
+
+function checksPlayerHit(b) {
+  if (!b || b.dead) return false;
+  if (b.age < SELF_HIT_ARM_TIME) return false;
+  const p1 = getPlayerPosition(1),
+    p2 = getPlayerPosition(2),
+    hitR = b.radius + PLAYER_RADIUS;
+  return (
+    Math.hypot(b.x - p1.x, b.y - p1.y) <= hitR ||
+    Math.hypot(b.x - p2.x, b.y - p2.y) <= hitR
+  );
+}
+
+function explodeProjectile(b, now) {
+  if (!b || b.dead) return;
+  const group =
+    Array.isArray(b.mineGroup) && b.mineGroup.length
+      ? [...b.mineGroup]
+      : [b];
+  if (!group.includes(b)) group.push(b);
+  if (b.onexplode) b.onexplode(b, now);
+  for (const m of group) {
+    if (!m || m.dead) continue;
+    const ix = clamp(m.x, 0, GAME_W - 1),
+      iy = clamp(m.y, 0, HUD_START),
+      cr = Math.max(0, m.crater);
+    carveCrater(ix, iy, cr);
+    applyExplosionDamage(
+      ix,
+      iy,
+      cr,
+      gameMode == "freeplay" || gameMode == "practice" ? 0 : m.damage,
+    );
+    craters.push({
+      x: ix,
+      y: iy,
+      radius: cr,
+      createdAt: now,
+      duration: Math.max(220, Math.sqrt(cr) * 90),
+    });
+    m.dead = true;
+  }
+}
+
+function carveCrater(cx, cy, r) {
+  const l = Math.max(0, Math.floor(cx - r)),
+    ri = Math.min(terrain.length - 1, Math.ceil(cx + r));
+  for (let x = l; x <= ri; x++) {
+    const dx = x - cx,
+      rem = r * r - dx * dx;
+    if (rem < 0) continue;
+    terrain[x] = clamp(
+      Math.max(terrain[x], cy + Math.sqrt(rem)),
+      GROUND_START,
+      HUD_START,
+    );
+  }
+}
+function applyRectExplosionDamage(x1, y1, x2, y2, dmg) {
+  const left = Math.min(x1, x2),
+    right = Math.max(x1, x2),
+    top = Math.min(y1, y2),
+    bottom = Math.max(y1, y2);
+  if (gameMode != "practice" && gameMode != "freeplay") {
+    const hitRect = (p) =>
+      p.x >= left && p.x <= right && p.y >= top && p.y <= bottom;
+    if (hitRect(getPlayerPosition(1)))
+      playerHealth = clamp(playerHealth - dmg, 0, 100);
+    if (hitRect(getPlayerPosition(2)))
+      player2Health = clamp(player2Health - dmg, 0, 100);
+  }
+  rectFlashes.push({ left, top, right, bottom, ticks: 100 });
+}
+function updateRectFlashes() {
+  for (let i = rectFlashes.length - 1; i >= 0; i--) {
+    rectFlashes[i].ticks--;
+    if (rectFlashes[i].ticks <= 0) rectFlashes.splice(i, 1);
+  }
+}
+function drawRectFlashes() {
+  for (const f of rectFlashes) {
+    const alpha = f.ticks / 100;
+    ctx.fillStyle = `rgba(255,0,0,${alpha})`;
+    ctx.fillRect(f.left, f.top, f.right - f.left, f.bottom - f.top);
+  }
+}
+function applyExplosionDamage(x, y, r, dmg) {
+  if (dmg <= 0 || r <= 0) return;
+  const p1 = getPlayerPosition(1),
+    p2 = getPlayerPosition(2);
+  const d1 = Math.hypot(p1.x - x, p1.y - y);
+  if (d1 <= r + PLAYER_RADIUS) {
+    const f = 1 - clamp((d1 - PLAYER_RADIUS) / r, 0, 1);
+    playerHealth = clamp(playerHealth - dmg * f, 0, 100);
+  }
+  const d2 = Math.hypot(p2.x - x, p2.y - y);
+  if (d2 <= r + PLAYER_RADIUS) {
+    const f = 1 - clamp((d2 - PLAYER_RADIUS) / r, 0, 1);
+    player2Health = clamp(player2Health - dmg * f, 0, 100);
+  }
+}
+function updateCraters(now) {
+  for (let i = craters.length - 1; i >= 0; i--)
+    if (now - craters[i].createdAt > craters[i].duration)
+      craters.splice(i, 1);
+}
+
+function spawnSelectedAttack() {
+  if (hasShot) return;
+  const aim = getAimData(),
+    attack = getSelectedAttack();
+  if (!attack || aim.power <= 0) return;
+  if (getAttackPt(attack.key) > points[currentPlayer - 1]) return;
+  points[currentPlayer - 1] -= getAttackPt(attack.key);
+  spawnAttack(attack, aim);
+  hasShot = true;
+}
+
+function spawnStaticMine(parent, now) {
+  const mineGroup = parent.mineGroup || (parent.mineGroup = []);
+  const staticMine = {
+    shotId: parent.shotId,
+    localId: `mine_static_${parent.shotId}_${parent.bounceCount}_${now}`,
+    parentLocalId: null,
+    orbit: null,
+    x: parent.x,
+    y: getTerrainY(parent.x),
+    vx: 0,
+    vy: 0,
+    weight: 0,
+    gravity: 0,
+    radius: parent.radius,
+    crater: parent.crater,
+    damage: parent.damage,
+    color: 0xff4400,
+    trailLength: 0,
+    trail: [],
+    age: 0,
+    dead: false,
+    bounce: 0,
+    bounceCount: 0,
+    mineGroup,
+    spawnMines: false,
+    isStaticMine: true,
+  };
+  mineGroup.push(staticMine);
+  balls.push(staticMine);
+}
+
+function bounceProjectile(b, hit, now) {
+  if (!b || b.dead) return;
+  const restitution = clamp(
+    Number.isFinite(b.bounce) ? b.bounce : 0.6,
+    0,
+    1,
+  );
+  const dot = b.vx * hit.nx + b.vy * hit.ny;
+  b.vx = (b.vx - 2 * dot * hit.nx) * restitution;
+  b.vy = (b.vy - 2 * dot * hit.ny) * restitution;
+  b.y = hit.ty - b.radius;
+  b.bounceCount = Math.max(0, (b.bounceCount || 0) - 1);
+  if (b.spawnMines) spawnStaticMine(b, now);
+}
+
+function spawnAttack(attack, aim) {
+  const shotId = shotCounter++,
+    spawnedById = new Map(),
+    baseSpeed = MAX_SHOT_SPEED * (aim.power / POWER_MAX);
+  attack.bullets.forEach((spec, index) => {
+    const localId = String(spec.id ?? index),
+      parentId = spec.parent ?? spec.orbitOf ?? spec.follow ?? null,
+      parent =
+        parentId == null ? null : spawnedById.get(String(parentId)),
+      context = {
+        attack,
+        spec,
+        aim,
+        player: aim.player,
+        parent,
+        shotId,
+        index,
+      },
+      spawnBase = parent || aim.player;
+    const wx = resolveNumber(spec.x, 0, context),
+      wy = resolveNumber(spec.y, 0, context),
+      lx = resolveNumber(spec.localX, 0, context),
+      ly = resolveNumber(spec.localY, 0, context),
+      fwd = rotateVector(aim.dirX, aim.dirY, 0),
+      side = rotateVector(aim.dirX, aim.dirY, Math.PI / 2),
+      spawnX = spawnBase.x + wx + side.x * lx + fwd.x * ly,
+      spawnY = spawnBase.y + wy + side.y * lx + fwd.y * ly,
+      off = degToRad(
+        resolveNumber(spec.offset, attack.offset ?? 0, context),
+      ),
+      dir = rotateVector(aim.dirX, aim.dirY, off),
+      range = resolveNumber(spec.range, attack.range, context),
+      spd = resolveNumber(spec.speed, 1, context),
+      inherit = spec.inheritVelocity ?? Boolean(parent),
+      vx =
+        inherit && parent ? parent.vx : dir.x * baseSpeed * range * spd,
+      vy =
+        inherit && parent ? parent.vy : dir.y * baseSpeed * range * spd,
+      orbit = normalizeOrbit(spec, context),
+      mineGroup = spec.spawnMines ? [] : null;
+    const ball = {
+      shotId,
+      localId,
+      parentLocalId: parent ? String(parentId) : null,
+      x: spawnX,
+      y: spawnY,
+      vx,
+      vy,
+      weight: resolveNumber(spec.weight, attack.weight, context),
+      gravity: resolveNumber(spec.gravity, PROJECTILE_GRAVITY, context),
+      radius: resolveNumber(spec.radius, attack.radius, context),
+      crater:
+        resolveNumber(spec.crater, attack.crater, context) ??
+        resolveNumber(spec.radius, attack.radius, context) * 3,
+      color: spec.color ?? attack.color,
+      damage: resolveNumber(spec.damage, attack.damage / 10, context),
+      trailLength: resolveNumber(
+        spec.trailLength,
+        attack.trailLength,
+        context,
+      ),
+      trail: [],
+      orbit,
+      age: 0,
+      dead: false,
+      bounce: spec.bounce ?? 0,
+      bounceCount: spec.bounceCount ?? 0,
+      mineGroup: mineGroup ?? [],
+      spawnMines: Boolean(spec.spawnMines),
+      isStaticMine: false,
+      terrainArmed: spec.terrainArmed ?? true,
+      onexplode: spec.onexplode,
+      ontick: spec.ontick,
+      isRect: Boolean(spec.isRect),
+      rectW: resolveNumber(spec.rectW, 40, context),
+      rectH: resolveNumber(spec.rectH, GAME_H, context),
+      delay: spec.delay ?? 0,
+    };
+    applyInitialOrbit(ball, parent);
+    ball.spawnX = spawnX;
+    ball.spawnY = spawnY;
+    pushTrail(ball);
+    balls.push(ball);
+    spawnedById.set(localId, ball);
+    if (mineGroup) mineGroup.push(ball);
+  });
+}
+
+function normalizeOrbit(spec, context) {
+  const src =
+    spec.orbit ||
+    (spec.orbitRadius
+      ? {
+          radius: spec.orbitRadius,
+          speed: spec.orbitSpeed,
+          phase: spec.orbitPhase,
+        }
+      : null);
+  if (!src) return null;
+  return {
+    radius: resolveNumber(src.radius, 24, context),
+    speed: resolveNumber(src.speed, 6, context),
+    phase: resolveNumber(
+      src.phase,
+      degToRad(resolveNumber(src.phaseDeg, 0, context)),
+      context,
+    ),
+  };
+}
+function applyInitialOrbit(b, p) {
+  if (!b.orbit || !p) return;
+  b.x = p.x + Math.sin(b.orbit.phase) * b.orbit.radius;
+  b.y = p.y + Math.cos(b.orbit.phase) * b.orbit.radius;
+}
+
+function drawPointOrbs() {
+  for (const o of pointOrbs) {
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, o.radius, 0, Math.PI * 2);
+    ctx.fillStyle = colorToCss(o.color);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `bold ${Math.round(o.radius)}px monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`+${o.v}`, o.x, o.y);
+  }
+}
+
+function draw() {
+  const now = Date.now(),
+    aim = getAimData();
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+  drawWorldBackground();
+  if (screen === "menu") {
+    drawMenu();
+    return;
+  }
+  if (screen === "modeSelect") {
+    drawModeSelect();
+    return;
+  }
+  if (screen === "settings") {
+    drawSettings();
+    return;
+  }
+  if (gameOver) {
+    drawTerrain();
+    drawPlayer(getPlayerPosition(1), 1);
+    drawPlayer(getPlayerPosition(2), 2);
+    drawProjectileTrails();
+    drawFadingTrails();
+    drawProjectiles();
+    drawGameOver();
+    return;
+  }
+  if (!gameRunning) {
+    drawStartMessage();
+    return;
+  }
+  drawTerrain();
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, GAME_W, HUD_START);
+  ctx.clip();
+  if (turnActive) drawAimLine(aim);
+  drawCraterEffects(now);
+  drawProjectileTrails();
+  drawFadingTrails();
+  drawProjectiles();
+  drawRectFlashes();
+  drawPlayer(getPlayerPosition(1), 1);
+  if (gameMode === "singledevice") {
+    drawPlayer(getPlayerPosition(2), 2);
+    drawInactivePlayerHealthBar();
+  }
+  drawPointOrbs();
+  ctx.restore();
+  drawHUD(aim);
+}
+function drawWorldBackground() {
+  ctx.fillStyle = "#16162a";
+  ctx.fillRect(0, 0, GAME_W, BG_END);
+  ctx.fillStyle = "#242846";
+  ctx.fillRect(0, GROUND_START, GAME_W, GROUND_END - GROUND_START);
+}
+function drawStartMessage() {
+  ctx.fillStyle = "#dff";
+  ctx.font = "48px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Click to begin", GAME_W / 2, GAME_H / 2);
+}
+function drawTerrain() {
+  const vp = Math.min(terrain.length, GAME_W);
+  ctx.fillStyle = "#414871";
+  ctx.beginPath();
+  ctx.moveTo(0, HUD_START);
+  ctx.lineTo(0, terrain[0]);
+  for (let x = 1; x < vp; x++) ctx.lineTo(x, terrain[x]);
+  ctx.lineTo(GAME_W, HUD_START);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#8080ff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, terrain[0]);
+  for (let x = 1; x < vp; x++) ctx.lineTo(x, terrain[x]);
+  ctx.stroke();
+  ctx.strokeStyle = "#e8e8ff";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, terrain[0]);
+  for (let x = 1; x < vp; x++) ctx.lineTo(x, terrain[x]);
+  ctx.stroke();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, HUD_START);
+  ctx.lineTo(GAME_W, HUD_START);
+  ctx.stroke();
+}
+function drawAimLine(aim) {
+  ctx.strokeStyle =
+    aim.power >= POWER_MAX
+      ? "rgba(255,255,255,0.78)"
+      : "rgba(255,255,255,0.5)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(aim.player.x, aim.player.y);
+  ctx.lineTo(
+    aim.player.x + aim.dirX * aim.drawLength,
+    aim.player.y + aim.dirY * aim.drawLength,
+  );
+  ctx.stroke();
+}
+function drawCraterEffects(now) {
+  for (const c of craters) {
+    const prog = clamp((now - c.createdAt) / c.duration, 0, 1),
+      alpha = 1 - (1 - Math.cos((prog * Math.PI) / 2));
+    ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.7})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+function drawProjectileTrails() {
+  for (const b of balls) {
+    if (b.trail.length < 2) continue;
+    ctx.lineWidth = Math.max(1, b.radius * 0.35);
+    for (let i = 1; i < b.trail.length; i++) {
+      ctx.strokeStyle = colorToRgba(b.color, (i / b.trail.length) * 0.5);
+      ctx.beginPath();
+      ctx.moveTo(b.trail[i - 1].x, b.trail[i - 1].y);
+      ctx.lineTo(b.trail[i].x, b.trail[i].y);
+      ctx.stroke();
+    }
+  }
+}
+// FIX 3: draw saved trails that are fading out after their projectile left the screen
+function drawFadingTrails() {
+  for (const ft of fadingTrails) {
+    if (ft.trail.length < 2) continue;
+    ctx.lineWidth = Math.max(1, ft.radius * 0.35);
+    for (let i = 1; i < ft.trail.length; i++) {
+      ctx.strokeStyle = colorToRgba(
+        ft.color,
+        (i / ft.trail.length) * 0.5 * ft.alpha,
+      );
+      ctx.beginPath();
+      ctx.moveTo(ft.trail[i - 1].x, ft.trail[i - 1].y);
+      ctx.lineTo(ft.trail[i].x, ft.trail[i].y);
+      ctx.stroke();
+    }
+  }
+}
+function drawProjectiles() {
+  for (const b of balls) {
+    ctx.fillStyle = colorToCss(b.color);
+    if (b.isRect) {
+      ctx.fillRect(b.x - b.rectW / 2, 0, b.rectW, b.rectH);
+      continue;
+    }
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+function drawPlayer(player, n) {
+  const isActive = n == currentPlayer && turnActive,
+    color = n == 1 ? "#00ff00" : "#ff0000";
+  if (isActive) {
+    ctx.strokeStyle = "#ffff00";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, PLAYER_RADIUS + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+}
+function drawInactivePlayerHealthBar() {
+  const n = currentPlayer == 1 ? 2 : 1,
+    pos = getPlayerPosition(n),
+    health = n == 1 ? playerHealth : player2Health,
+    ratio = health / 100,
+    bx = pos.x - HEALTH_BAR_W / 2,
+    by = pos.y - HEALTH_BAR_OFFSET_Y - HEALTH_BAR_H;
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(bx, by, HEALTH_BAR_W, HEALTH_BAR_H);
+  ctx.fillStyle =
+    ratio > 0.5 ? "#00ff64" : ratio > 0.25 ? "#ffff66" : "#ff5a5a";
+  ctx.fillRect(bx, by, HEALTH_BAR_W * ratio, HEALTH_BAR_H);
+  ctx.strokeStyle = "rgba(255,255,255,0.4)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, HEALTH_BAR_W, HEALTH_BAR_H);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "14px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(`P${n} ${Math.round(health)}%`, pos.x, by - 2);
+}
+function drawHUD(aim) {
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, HUD_START, GAME_W, HUD_H);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, HUD_START);
+  ctx.lineTo(GAME_W, HUD_START);
+  ctx.stroke();
+  if (gameMode != "practice" && gameMode != "freeplay") {
+    const ac = currentPlayer == 1 ? "#00ff00" : "#ff4444";
+    ctx.fillStyle = ac;
+    ctx.font = "bold 20px monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText(`\u25B6 Player ${currentPlayer}`, 12, HUD_START + 12);
+    const ah = currentPlayer == 1 ? playerHealth : player2Health,
+      ar = ah / 100,
+      hc = ar > 0.5 ? "#00ff64" : ar > 0.25 ? "#ffff66" : "#ff5a5a";
+    ctx.fillStyle = "#281212";
+    ctx.fillRect(0, HUD_START + 2, GAME_W, 4);
+    ctx.fillStyle = hc;
+    ctx.fillRect(0, HUD_START + 2, GAME_W * ar, 4);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "14px monospace";
+    ctx.fillText(`HP ${Math.round(ah)}%`, 12, HUD_START + 42);
+    const fr = fuel / fuelMax,
+      fc = fr > 0.5 ? "#4aa3ff" : fr > 0.25 ? "#ffb84a" : "#ff4a4a",
+      fuelX = 12,
+      fuelY = HUD_START + 58,
+      fuelW = 180;
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(fuelX, fuelY, fuelW, 10);
+    ctx.fillStyle = fc;
+    ctx.fillRect(fuelX, fuelY, fuelW * fr, 10);
+    ctx.strokeStyle = "rgba(255,255,255,0.3)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(fuelX, fuelY, fuelW, 10);
+    ctx.fillStyle = "#aaaaaa";
+    ctx.font = "12px monospace";
+    ctx.fillText(
+      `FUEL ${Math.round(fuel)} / ${fuelMax}`,
+      fuelX,
+      fuelY + 22,
+    );
+  }
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "14px monospace";
+  ctx.fillText(
+    `PWR ${Math.round(aim.power)}, ANGLE ${Math.round(aim.angle)}`,
+    12,
+    HUD_START + 94,
+  );
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "14px monospace";
+  ctx.textAlign = "left";
+  const pts = points[currentPlayer - 1];
+  ctx.fillText(
+    `PTS ${Number.isFinite(pts) ? pts : "\u221E"}`,
+    12,
+    HUD_START + 130,
+  );
+  const sel = getSelectedAttack();
+  if (sel) ctx.fillText(trimLabel(sel.name, 20), 12, HUD_START + 112);
+  drawAttackSelector();
+}
+function drawAttackSelector() {
+  const al = getVisibleAttackList(),
+    layout = getAttackLayout(),
+    selectedKey = getSelectedAttack()?.key,
+    selectedGroup = attacks[selectedKey]?.group;
+  hudAttackSlots = [];
+  ctx.font = "16px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (let vi = 0; vi < al.length; vi++) {
+    const atk = al[vi],
+      col = vi % layout.columns,
+      row = Math.floor(vi / layout.columns),
+      x = layout.startX + col * (layout.slotW + ATTACK_SLOT_GAP),
+      y = layout.startY + row * (ATTACK_SLOT_H + ATTACK_SLOT_GAP),
+      sel =
+        atk.key == selectedKey ||
+        attacks[atk.key]?.group == selectedGroup;
+    const displayAtk =
+      sel && atk.key !== selectedKey
+        ? (getAttackList().find((a) => a.key == selectedKey) ?? atk)
+        : atk;
+    const affordable =
+      getAttackPt(displayAtk.key) <= points[currentPlayer - 1];
+    hudAttackSlots.push({
+      index: getAttackList().findIndex((a) => a.key == atk.key),
+      x,
+      y,
+      w: layout.slotW,
+      h: ATTACK_SLOT_H,
+    });
+    ctx.fillStyle = sel ? "#173f3f" : affordable ? "#111827" : "#1a1a1a";
+    ctx.fillRect(x, y, layout.slotW, ATTACK_SLOT_H);
+    ctx.strokeStyle = sel
+      ? "#7fffff"
+      : affordable
+        ? "#4b5563"
+        : "#333333";
+    ctx.lineWidth = sel ? 2 : 1;
+    ctx.strokeRect(x, y, layout.slotW, ATTACK_SLOT_H);
+    let sx = x + 6;
+    for (const sp of displayAtk.bullets.slice(0, 4)) {
+      ctx.fillStyle = affordable
+        ? colorToCss(sp.color ?? displayAtk.color)
+        : "#444444";
+      ctx.fillRect(sx, y + 8, 10, 10);
+      sx += 12;
+    }
+    ctx.fillStyle = affordable ? "#ffffff" : "#555555";
+    ctx.fillText(
+      trimLabel(displayAtk.name, ATTACK_SLOT_CHARS),
+      x + 58,
+      y + ATTACK_SLOT_H / 2,
+    );
+  }
+}
+function selectAttackFromHUD() {
+  const s = hudAttackSlots.find(
+    (c) =>
+      mouseX >= c.x &&
+      mouseX <= c.x + c.w &&
+      mouseY >= c.y &&
+      mouseY <= c.y + c.h,
+  );
+  if (!s) return false;
+  selectAttack(s.index);
+  return true;
+}
+function drawGameOver() {
+  ctx.fillStyle = "rgba(0,0,0,0.8)";
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "64px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(`Player ${winner} Wins!`, GAME_W / 2, GAME_H / 2 - 50);
+  ctx.font = "32px monospace";
+  ctx.fillText("Click to restart", GAME_W / 2, GAME_H / 2 + 50);
+}
+function navigateTo(s) {
+  screenHistory.push(screen);
+  screen = s;
+}
+function navigateBack() {
+  if (screenHistory.length) screen = screenHistory.pop();
+}
+
+const MENU_BTN_W = 400,
+  MENU_BTN_H = 70,
+  MENU_BTN_GAP = 24;
+let menuButtons = [],
+  modeButtons = [],
+  settingsButtons = [];
+
+function drawMenuButton(label, x, y, w, h, active, disabled) {
+  ctx.fillStyle = disabled ? "#111" : active ? "#173f3f" : "#111827";
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = disabled ? "#333" : active ? "#7fffff" : "#4b5563";
+  ctx.lineWidth = active ? 2 : 1;
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = disabled ? "#444" : "#ffffff";
+  ctx.font = "bold 28px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + w / 2, y + h / 2);
+}
+function drawBackButton() {
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(30, 30, 160, 50);
+  ctx.strokeStyle = "#4b5563";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(30, 30, 160, 50);
+  ctx.fillStyle = "#aaaaaa";
+  ctx.font = "20px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("\u2190 Back", 30 + 80, 30 + 25);
+  return { x: 30, y: 30, w: 160, h: 50 };
+}
+function drawMenu() {
+  menuButtons = [];
+  ctx.fillStyle = "#16162a";
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  ctx.fillStyle = "#aff";
+  ctx.font = "bold 80px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("GAME", GAME_W / 2, GAME_H / 2 - 180);
+  const labels = ["Play", "Settings", "Extra"],
+    disabled = [false, false, true],
+    cx = GAME_W / 2 - MENU_BTN_W / 2,
+    startY =
+      GAME_H / 2 -
+      (labels.length * MENU_BTN_H + (labels.length - 1) * MENU_BTN_GAP) /
+        2 +
+      50;
+  labels.forEach((lbl, i) => {
+    const y = startY + i * (MENU_BTN_H + MENU_BTN_GAP);
+    drawMenuButton(
+      lbl,
+      cx,
+      y,
+      MENU_BTN_W,
+      MENU_BTN_H,
+      false,
+      disabled[i],
+    );
+    menuButtons.push({
+      label: lbl,
+      x: cx,
+      y,
+      w: MENU_BTN_W,
+      h: MENU_BTN_H,
+      disabled: disabled[i],
+    });
+  });
+  ctx.fillStyle = "rgba(150,220,255,0.4)";
+  ctx.font = "18px monospace";
+  ctx.fillText(
+    "Click anywhere to enter fullscreen",
+    GAME_W / 2,
+    GAME_H - 40,
+  );
+}
+function handleMenuClick() {
+  for (const btn of menuButtons) {
+    if (btn.disabled) continue;
+    if (
+      mouseX >= btn.x &&
+      mouseX <= btn.x + btn.w &&
+      mouseY >= btn.y &&
+      mouseY <= btn.y + btn.h
+    ) {
+      if (btn.label === "Play") navigateTo("modeSelect");
+      if (btn.label === "Settings") navigateTo("settings");
+    }
+  }
+}
+function drawModeSelect() {
+  modeButtons = [];
+  ctx.fillStyle = "#16162a";
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  const back = drawBackButton();
+  modeButtons.push({ label: "__back", ...back });
+  ctx.fillStyle = "#aff";
+  ctx.font = "bold 50px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Select Mode", GAME_W / 2, 200);
+  const modes = [
+    {
+      key: "singledevice",
+      label: "Single Device",
+      desc: "2 players, 1 screen",
+      disabled: false,
+    },
+    {
+      key: "freeplay",
+      label: "Freeplay",
+      desc: "Infinite points, no opponent",
+      disabled: false,
+    },
+    {
+      key: "practice",
+      label: "Practice",
+      desc: "Same as Freeplay for now",
+      disabled: false,
+    },
+    {
+      key: "online",
+      label: "Online",
+      desc: "Coming soon",
+      disabled: true,
+    },
+  ];
+  const bw = 500,
+    bh = 90,
+    gap = 20,
+    cx = GAME_W / 2 - bw / 2,
+    startY = 320;
+  modes.forEach((m, i) => {
+    const y = startY + i * (bh + gap),
+      active = gameMode === m.key && !m.disabled;
+    drawMenuButton(m.label, cx, y, bw, bh, active, m.disabled);
+    ctx.fillStyle = m.disabled ? "#333" : "rgba(150,220,255,0.5)";
+    ctx.font = "18px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText(m.desc, cx + bw / 2, y + bh + 2);
+    if (!m.disabled)
+      modeButtons.push({ key: m.key, x: cx, y, w: bw, h: bh });
+  });
+  const py = startY + modes.length * (bh + gap) + 30;
+  drawMenuButton("\u25B6 Play", cx, py, bw, MENU_BTN_H, false, false);
+  modeButtons.push({ key: "__play", x: cx, y: py, w: bw, h: MENU_BTN_H });
+}
+function handleModeSelectClick() {
+  for (const btn of modeButtons) {
+    if (
+      mouseX >= btn.x &&
+      mouseX <= btn.x + btn.w &&
+      mouseY >= btn.y &&
+      mouseY <= btn.y + btn.h
+    ) {
+      if (btn.key === "__back") {
+        navigateBack();
+        return;
+      }
+      if (btn.key === "__play") {
+        startGame();
+        return;
+      }
+      gameMode = btn.key;
+    }
+  }
+}
+function startGame() {
+  restartGame();
+  if (gameMode === "freeplay" || gameMode === "practice") {
+    points = Array(2).fill(Infinity);
+    player2Health = -1;
+  }
+  screen = "game";
+  gameRunning = true;
+  startTurn(1);
+  lastTime = Date.now();
+}
+function drawSettings() {
+  settingsButtons = [];
+  ctx.fillStyle = "#16162a";
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  const back = drawBackButton();
+  settingsButtons.push({ key: "__back", ...back });
+  ctx.fillStyle = "#aff";
+  ctx.font = "bold 50px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Settings", GAME_W / 2, 160);
+  ctx.fillStyle = "#dff";
+  ctx.font = "28px monospace";
+  ctx.fillText("Maps", GAME_W / 2, 280);
+  const mapKeys = Object.keys(maps),
+    bw = 220,
+    bh = 55,
+    gap = 16,
+    total = mapKeys.length * (bw + gap) - gap;
+  let sx = GAME_W / 2 - total / 2;
+  const my = 320;
+  mapKeys.forEach((mk) => {
+    const active = settingsData.map.toLowerCase() === mk;
+    drawMenuButton(
+      mk[0].toUpperCase() + mk.slice(1),
+      sx,
+      my,
+      bw,
+      bh,
+      active,
+      false,
+    );
+    settingsButtons.push({
+      key: "map:" + mk,
+      x: sx,
+      y: my,
+      w: bw,
+      h: bh,
+    });
+    sx += bw + gap;
+  });
+  ctx.fillStyle = "rgba(150,220,255,0.4)";
+  ctx.font = "18px monospace";
+  ctx.fillText("More settings coming soon", GAME_W / 2, my + bh + 50);
+}
+function handleSettingsClick() {
+  for (const btn of settingsButtons) {
+    if (
+      mouseX >= btn.x &&
+      mouseX <= btn.x + btn.w &&
+      mouseY >= btn.y &&
+      mouseY <= btn.y + btn.h
+    ) {
+      if (btn.key === "__back") {
+        navigateBack();
+        return;
+      }
+      if (btn.key.startsWith("map:")) {
+        settingsData.map = btn.key.slice(4);
+        terrainf = maps[settingsData.map];
+      }
+    }
+  }
+}
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+async function enterFullscreen() {
+  try {
+    await document.documentElement.requestFullscreen();
+    gameStarted = true;
+  } catch (e) {
+    console.log("Fullscreen failed:", e);
+  }
+}
+function restartGame() {
+  points = [0, 0];
+  gameRunning = gameOver = gameStarted = turnActive = hasShot = false;
+  playerHealth = player2Health = playerX = 100;
+  currentPlayer = 1;
+  fuel = fuelMax;
+  balls = [];
+  craters = [];
+  pointOrbs = [];
+  fadingTrails = []; // FIX 3: clear fading trails on restart
+  player2X = GAME_W - 100;
+  generateTerrain();
+}
+
+canvas.addEventListener("click", (e) => {
+  setMouseFromEvent(e);
+  if (screen === "menu") {
+    if (document.fullscreenElement === null)
+      document.documentElement.requestFullscreen().catch(() => {});
+    handleMenuClick();
+    return;
+  }
+  if (screen === "modeSelect") {
+    handleModeSelectClick();
+    return;
+  }
+  if (screen === "settings") {
+    handleSettingsClick();
+    return;
+  }
+  if (screen === "game") {
+    if (!gameRunning) {
+      gameRunning = true;
+      startTurn(1);
+      lastTime = Date.now();
+      return;
+    }
+    if (!turnActive) return;
+    if (mouseY >= HUD_START) {
+      selectAttackFromHUD();
+      return;
+    }
+    if (!hasShot) spawnSelectedAttack();
+  }
+});
+
+// FIX 2: mouse wheel scrolls through weapon groups in the HUD
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    if (screen === "game" && gameRunning && turnActive) {
+      e.preventDefault();
+      cycleAttack(e.deltaY > 0 ? 1 : -1);
+    }
+  },
+  { passive: false },
+);
+
+generateTerrain();
+loop();
+
+let mediaRecorder,
+  recordedChunks = [];
+function startRecording() {
+  recordedChunks = [];
+  const stream = canvas.captureStream(60);
+  mediaRecorder = new MediaRecorder(stream, {
+    mimeType: "video/webm;codecs=vp9",
+  });
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) recordedChunks.push(e.data);
+  };
+  mediaRecorder.onstop = (_) => {
+    const blob = new Blob(recordedChunks, { type: "video/webm" }),
+      a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "game.webm";
+    a.click();
+  };
+  mediaRecorder.start();
+}
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive")
+    mediaRecorder.stop();
+}
+</script>
+</body>
+</html>
