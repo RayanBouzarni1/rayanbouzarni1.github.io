@@ -1,2 +1,2 @@
 # RayanBouzarni1's pages
-All of RayanBouzarni1's projects can be found here. If you have any issues, questions, suggestions or found any bugs, please submit them [https://discord.gg/bZWWrSfec]
+All of RayanBouzarni1's projects can be found here. If you have any issues, questions, suggestions or found any bugs, please submit them in [https://discord.gg/bZWWrSfec]
