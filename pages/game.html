@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
 <title>Game</title>
-<link rel="icon" href="icon.png" type="image/png">
 <style>
 * {
   margin: 0;
@@ -77,7 +76,6 @@ const GAME_W = 1920,
     { n: 15, chance: 0.004 },
     { n: 100, chance: 0.001 },
   ];
-
 const canvas = document.getElementById("game"),
   ctx = canvas.getContext("2d");
 canvas.width = GAME_W;
@@ -113,222 +111,143 @@ let terrain = [],
   points = [0, 0],
   pointOrbs = [],
   rectFlashes = [],
-  // FIX 3: storage for trails of projectiles that went out of bounds
   fadingTrails = [],
+  boundaries = [],
+  playerXP = 0,
+  unlockedAttacks = new Set(["single"]),
+  unlockAnimations = [],
+  cachedTreeLayout = null,
+  pathsButtons = [],
+  treeScrollX = 0,
+  treeScrollY = 0,
+  treeScrollMaxX = 0,
+  treeScrollMaxY = 0,
   screen = "menu",
   screenHistory = [],
   gameMode = "singledevice",
   settingsData = { map: "fortress" },
   maps = {
     wavy: (x) => {
-      const t = (x / GAME_W) * 20 - 10,
-        norm =
-          (Math.cos(3 * t) * (Math.sin(t) + 1) +
-            4 * 1.05 ** (t ** 2 * -1) +
-            t ** 2 / 10 -
-            4 -
-            -4) /
-          (6 - -4);
+      const t = (x / GAME_W) * 20 - 10;
+
+      const norm =
+        (Math.cos(3 * t) * (Math.sin(t) + 1) +
+          4 * 1.05 ** -(t ** 2) +
+          (t * t) / 10) /
+        10;
+
       return HUD_START - norm * (HUD_START - GROUND_START) - 450;
     },
     flat: (x) => 50,
     bowl: (x) => (x - 960) ** 2 / -2e3 + 200,
     zigzag: (x) => -Math.abs((x % 100) - 50) + 100,
-    dip: (x) => (x - 960) ** 2 / -1.25e3 + 200 + 100,
+    dip: (x) => (x - 960) ** 2 / -1.25e3 + 300,
     fortress: (x) => -Math.abs(Math.sin(x / 100) ** 21) * 100,
   };
-
 terrainf = maps.wavy;
 
 let attacks = {
-    single: {
-      pt: 0,
-      name: "Single",
-      group: "shots",
-      bullets: [
-        {
-          id: "main",
-          damage: 14,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 24,
-          color: 0xffffff,
-        },
-      ],
-    },
-    nuke: {
-      pt: 150,
-      name: "Nuke",
-      group: "neuclear",
-      bullets: [
-        {
-          id: "nuke",
-          damage: 255,
-          range: 1,
-          weight: 2,
-          radius: 24,
-          crater: 216,
-          color: 0xffff00,
-          trailLength: 112,
-          terrainArmed: false,
-        },
-      ],
-    },
-    laser: {
-      pt: 30,
-      name: "Laser",
-      group: "lasers",
-      bullets: [
-        {
-          id: "laser",
-          damage: 10,
-          range: 1,
-          weight: 0,
-          radius: 4,
-          crater: 4,
-          color: 0xff0000,
-          trailLength: 216,
-        },
-      ],
-    },
-    beam: { pt: 60, name: "Beam", bullets: [], group: "lasers" },
-    laserstream: {
-      pt: 150,
-      name: "Laserstream",
-      group: "lasers",
-      bullets: Array.from({ length: 10 }, (_, i) => ({
-        id: "laserstream_" + crypto.randomUUID(),
-        damage: 6.25 - i / 2,
-        range: 0.75 - i / 20,
-        weight: 0,
-        radius: 4 - i / 4,
-        crater: 12 - (1.5 * i) / 2,
-        color: 0xff0000,
-        trailLength: 54,
-        delay: -i / 10 + 1,
+  single: {
+    pt: 0,
+    name: "Single",
+    group: "shots",
+    bullets: [
+      {
+        id: "main",
+        damage: 14,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 24,
+        color: 0xffffff,
+      },
+    ],
+  },
+  nuke: {
+    pt: 150,
+    name: "Nuke",
+    group: "neuclear",
+    bullets: [
+      {
+        id: "nuke",
+        damage: 255,
+        range: 1,
+        weight: 2,
+        radius: 24,
+        crater: 216,
+        color: 0xffff00,
+        trailLength: 112,
         terrainArmed: false,
-      })),
-    },
-    cluster: { pt: 60, name: "cluster", bullets: [], group: "cluster" },
-    rain: {
-      pt: 0,
-      name: "Rain",
-      bullets: [
-        {
-          id: "rain",
-          damage: 0,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 0,
-          color: 0x3f5f7f,
-          bounce: 0.75,
-          bounceCount: 100,
-          onexplode: (b) =>
-            balls.push(
-              ...Array.from({ length: 20 }, (_, i) => ({
-                shotId: b.shotId,
-                localId: `raindrop_${crypto.randomUUID()}`,
-                parentLocalId: null,
-                orbit: null,
-                x: b.x + Math.random() * 320 - 160,
-                y: -170 + Math.random() * 320 - 160,
-                vx: 0,
-                vy: 0,
-                weight: 1,
-                gravity: PROJECTILE_GRAVITY,
-                radius: 3,
-                crater: 9,
-                color: b.color,
-                damage: 12,
-                trailLength: b.trailLength,
-                trail: [],
-                age: 0,
-                dead: false,
-                bounce: 0,
-                bounceCount: 0,
-                mineGroup: [],
-                spawnMines: false,
-                isStaticMine: false,
-                terrainArmed: true,
-              })),
-            ),
-        },
-      ],
-    },
-    landmine: {
-      pt: 50,
-      name: "Landmine",
-      group: "explosives",
-      bullets: [
-        {
-          id: "mine",
-          damage: 50,
-          range: 1,
-          spawnMines: true,
-          weight: 1,
-          radius: 12,
-          crater: 36,
-          color: 0x7f7f7f,
-          trailLength: 54,
-          bounce: 0.8,
-          bounceCount: 4,
-        },
-      ],
-    },
-    grenade: {
-      pt: 30,
-      name: "Grenade",
-      group: "grenades",
-      bullets: [
-        {
-          id: "grenade",
-          damage: 80,
-          range: 0.75,
-          spawnMines: false,
-          weight: 1,
-          radius: 6,
-          crater: 36,
-          color: 0x007f00,
-          trailLength: 54,
-          bounce: 0.6,
-          bounceCount: 100,
-        },
-      ],
-    },
-    shrapnel: {
-      pt: 80,
-      name: "Shrapnel",
-      group: "grenades",
-      bullets: [
-        {
-          id: "shrapnel",
-          damage: 75,
-          range: 0.75,
-          spawnMines: false,
-          weight: 1,
-          radius: 8,
-          crater: 42,
-          color: 0x005f00,
-          trailLength: 54,
-          bounce: 0.5,
-          bounceCount: 125,
-          onexplode: (b) =>
-            Array.from({ length: 20 }, (_) => ({
+      },
+    ],
+  },
+  laser: {
+    pt: 30,
+    name: "Laser",
+    group: "lasers",
+    bullets: [
+      {
+        id: "laser",
+        damage: 10,
+        range: 1,
+        weight: 0,
+        radius: 4,
+        crater: 4,
+        color: 0xff0000,
+        trailLength: 216,
+      },
+    ],
+  },
+  beam: { pt: 60, name: "Beam", bullets: [], group: "lasers" },
+  laserstream: {
+    pt: 150,
+    name: "Laserstream",
+    group: "lasers",
+    bullets: Array.from({ length: 10 }, (_, i) => ({
+      id: "laserstream_" + crypto.randomUUID(),
+      damage: 6.25 - i / 2,
+      range: 0.75 - i / 20,
+      weight: 0,
+      radius: 4 - i / 4,
+      crater: 12 - (1.5 * i) / 2,
+      color: 0xff0000,
+      trailLength: 54,
+      delay: -i / 10 + 1,
+      terrainArmed: false,
+    })),
+  },
+  cluster: { pt: 60, name: "cluster", bullets: [], group: "cluster" },
+  rain: {
+    pt: 0,
+    name: "Rain",
+    group: "explosives",
+    bullets: [
+      {
+        id: "rain",
+        damage: 0,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 0,
+        color: 0x3f5f7f,
+        bounce: 0.75,
+        bounceCount: 100,
+        onexplode: (b) =>
+          balls.push(
+            ...Array.from({ length: 20 }, (_, i) => ({
               shotId: b.shotId,
-              localId: `shrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+              localId: `raindrop_${crypto.randomUUID()}`,
               parentLocalId: null,
               orbit: null,
-              x: b.x,
-              y: b.y - 4,
-              vx: Math.random() * 400 - 200,
-              vy: -Math.random() * 600,
+              x: b.x + Math.random() * 320 - 160,
+              y: -170 + Math.random() * 320 - 160,
+              vx: 0,
+              vy: 0,
               weight: 1,
               gravity: PROJECTILE_GRAVITY,
-              radius: 4,
-              crater: 12,
-              color: 0x1f3f1f,
+              radius: 3,
+              crater: 9,
+              color: b.color,
               damage: 12,
               trailLength: b.trailLength,
               trail: [],
@@ -340,165 +259,131 @@ let attacks = {
               spawnMines: false,
               isStaticMine: false,
               terrainArmed: true,
-            })).forEach((x) => balls.push(x)),
-        },
-      ],
-    },
-    grenaderain: {
-      pt: 120,
-      name: "Grenade rain",
-      group: "grenades",
-      bullets: [
-        {
-          id: "grenaderain",
-          damage: 0,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 0,
-          color: 0x3f7f5f,
-          bounce: 0.75,
-          bounceCount: 100,
-          onexplode: (b) =>
-            balls.push(
-              ...Array.from({ length: 20 }, (_, i) => ({
-                id: "grenaderain" + i,
-                shotId: b.shotId,
-                localId: `grenaderain_${crypto.randomUUID()}`,
-                parentLocalId: null,
-                orbit: null,
-                x: b.x + Math.random() * 320 - 160,
-                y: -170 + Math.random() * 320 - 160,
-                vx: 0,
-                vy: 0,
-                weight: 1,
-                gravity: PROJECTILE_GRAVITY,
-                radius: 3,
-                crater: 9,
-                color: b.color,
-                damage: 12,
-                trailLength: b.trailLength,
-                trail: [],
-                age: 0,
-                dead: false,
-                bounce: 0.75,
-                bounceCount: 75,
-                mineGroup: [],
-                spawnMines: false,
-                isStaticMine: false,
-                terrainArmed: true,
-              })),
-            ),
-        },
-      ],
-    },
-    shrapnelrain: {
-      pt: 150,
-      name: "Shrapnel rain",
-      group: "grenades",
-      bullets: [
-        {
-          id: "shrapnelrain",
-          damage: 0,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 0,
-          color: 0x2f6f4f,
-          bounce: 0.75,
-          bounceCount: 100,
-          onexplode: (b) =>
-            balls.push(
-              ...Array.from({ length: 20 }, (_, i) => ({
-                shotId: b.shotId,
-                localId: `shrapnelrain_${crypto.randomUUID()}`,
-                parentLocalId: null,
-                orbit: null,
-                x: b.x + Math.random() * 320 - 160,
-                y: -170 + Math.random() * 320 - 160,
-                vx: 0,
-                vy: 0,
-                weight: 1,
-                gravity: PROJECTILE_GRAVITY,
-                radius: 3,
-                crater: 9,
-                color: b.color,
-                damage: 10,
-                trailLength: 54,
-                trail: [],
-                age: 0,
-                dead: false,
-                bounce: 0.75,
-                bounceCount: 75,
-                mineGroup: [],
-                spawnMines: false,
-                isStaticMine: false,
-                terrainArmed: true,
-                onexplode: (b1) =>
-                  Array.from({ length: 8 }, (_) => ({
-                    shotId: b1.shotId,
-                    localId: `shrapnelrain_${crypto.randomUUID()}_${crypto.randomUUID()}`,
-                    parentLocalId: null,
-                    orbit: null,
-                    x: b1.x,
-                    y: b1.y - 4,
-                    vx: Math.random() * 300 - 150,
-                    vy: -Math.random() * 400,
-                    weight: 1,
-                    gravity: PROJECTILE_GRAVITY,
-                    radius: 3,
-                    crater: 8,
-                    color: 0x1f3f1f,
-                    damage: 8,
-                    trailLength: b1.trailLength,
-                    trail: [],
-                    age: 0,
-                    dead: false,
-                    bounce: 0,
-                    bounceCount: 0,
-                    mineGroup: [],
-                    spawnMines: false,
-                    isStaticMine: false,
-                    terrainArmed: true,
-                  })).forEach((x) => balls.push(x)),
-              })),
-            ),
-        },
-      ],
-    },
-    recursiveshrapnel: {
-      pt: 200,
-      name: "Recursive Shrapnel",
-      group: "grenades",
-      bullets: [
-        {
-          id: "recursiveshrapnel",
-          damage: 65,
-          range: 0.625,
-          spawnMines: false,
-          weight: 1,
-          radius: 6,
-          crater: 36,
-          color: 0x003f00,
-          trailLength: 54,
-          bounce: 0.5,
-          bounceCount: 150,
-          onexplode: (b) => {
-            Array.from({ length: 15 }, (_) => ({
+            })),
+          ),
+      },
+    ],
+  },
+  landmine: {
+    pt: 50,
+    name: "Landmine",
+    group: "explosives",
+    bullets: [
+      {
+        id: "mine",
+        damage: 50,
+        range: 1,
+        spawnMines: true,
+        weight: 1,
+        radius: 12,
+        crater: 36,
+        color: 0x7f7f7f,
+        trailLength: 54,
+        bounce: 0.8,
+        bounceCount: 4,
+      },
+    ],
+  },
+  grenade: {
+    pt: 30,
+    name: "Grenade",
+    group: "grenades",
+    bullets: [
+      {
+        id: "grenade",
+        damage: 80,
+        range: 0.75,
+        spawnMines: false,
+        weight: 1,
+        radius: 6,
+        crater: 36,
+        color: 0x007f00,
+        trailLength: 54,
+        bounce: 0.6,
+        bounceCount: 100,
+      },
+    ],
+  },
+  shrapnel: {
+    pt: 80,
+    name: "Shrapnel",
+    group: "grenades",
+    bullets: [
+      {
+        id: "shrapnel",
+        damage: 75,
+        range: 0.75,
+        spawnMines: false,
+        weight: 1,
+        radius: 8,
+        crater: 42,
+        color: 0x005f00,
+        trailLength: 54,
+        bounce: 0.5,
+        bounceCount: 125,
+        onexplode: (b) =>
+          Array.from({ length: 20 }, (_) => ({
+            shotId: b.shotId,
+            localId: `shrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+            parentLocalId: null,
+            orbit: null,
+            x: b.x,
+            y: b.y - 4,
+            vx: Math.random() * 400 - 200,
+            vy: -Math.random() * 600,
+            weight: 1,
+            gravity: PROJECTILE_GRAVITY,
+            radius: 4,
+            crater: 12,
+            color: 0x1f3f1f,
+            damage: 12,
+            trailLength: b.trailLength,
+            trail: [],
+            age: 0,
+            dead: false,
+            bounce: 0,
+            bounceCount: 0,
+            mineGroup: [],
+            spawnMines: false,
+            isStaticMine: false,
+            terrainArmed: true,
+          })).forEach((x) => balls.push(x)),
+      },
+    ],
+  },
+  grenaderain: {
+    pt: 120,
+    name: "Grenade rain",
+    group: "grenades",
+    bullets: [
+      {
+        id: "grenaderain",
+        damage: 0,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 0,
+        color: 0x3f7f5f,
+        bounce: 0.75,
+        bounceCount: 100,
+        onexplode: (b) =>
+          balls.push(
+            ...Array.from({ length: 20 }, (_, i) => ({
+              id: "grenaderain" + i,
               shotId: b.shotId,
-              localId: `recursiveshrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+              localId: `grenaderain_${crypto.randomUUID()}`,
               parentLocalId: null,
               orbit: null,
-              x: b.x,
-              y: b.y - 4,
-              vx: Math.random() * 400 - 200,
-              vy: -Math.random() * 600,
+              x: b.x + Math.random() * 320 - 160,
+              y: -170 + Math.random() * 320 - 160,
+              vx: 0,
+              vy: 0,
               weight: 1,
               gravity: PROJECTILE_GRAVITY,
               radius: 3,
               crater: 9,
-              color: 0x2f5f2f,
-              damage: 5,
+              color: b.color,
+              damage: 12,
               trailLength: b.trailLength,
               trail: [],
               age: 0,
@@ -509,23 +394,70 @@ let attacks = {
               spawnMines: false,
               isStaticMine: false,
               terrainArmed: true,
-              onexplode: (b0) =>
-                Array.from({ length: 5 }, (_) => ({
-                  shotId: b0.shotId,
-                  localId: `shrapnel_child_child${Date.now()}_${crypto.randomUUID()}`,
+            })),
+          ),
+      },
+    ],
+  },
+  shrapnelrain: {
+    pt: 150,
+    name: "Shrapnel rain",
+    group: "grenades",
+    bullets: [
+      {
+        id: "shrapnelrain",
+        damage: 0,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 0,
+        color: 0x2f6f4f,
+        bounce: 0.75,
+        bounceCount: 100,
+        onexplode: (b) =>
+          balls.push(
+            ...Array.from({ length: 20 }, (_, i) => ({
+              shotId: b.shotId,
+              localId: `shrapnelrain_${crypto.randomUUID()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x + Math.random() * 320 - 160,
+              y: -170 + Math.random() * 320 - 160,
+              vx: 0,
+              vy: 0,
+              weight: 1,
+              gravity: PROJECTILE_GRAVITY,
+              radius: 3,
+              crater: 9,
+              color: b.color,
+              damage: 10,
+              trailLength: 54,
+              trail: [],
+              age: 0,
+              dead: false,
+              bounce: 0.75,
+              bounceCount: 75,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+              onexplode: (b1) =>
+                Array.from({ length: 8 }, (_) => ({
+                  shotId: b1.shotId,
+                  localId: `shrapnelrain_${crypto.randomUUID()}_${crypto.randomUUID()}`,
                   parentLocalId: null,
                   orbit: null,
-                  x: b0.x,
-                  y: b0.y - 4,
-                  vx: Math.random() * 400 - 200,
-                  vy: -Math.random() * 600,
+                  x: b1.x,
+                  y: b1.y - 4,
+                  vx: Math.random() * 300 - 150,
+                  vy: -Math.random() * 400,
                   weight: 1,
                   gravity: PROJECTILE_GRAVITY,
-                  radius: 2,
-                  crater: 6,
-                  color: 0x2f3f2f,
-                  damage: 3,
-                  trailLength: b0.trailLength,
+                  radius: 3,
+                  crater: 8,
+                  color: 0x1f3f1f,
+                  damage: 8,
+                  trailLength: b1.trailLength,
                   trail: [],
                   age: 0,
                   dead: false,
@@ -536,237 +468,182 @@ let attacks = {
                   isStaticMine: false,
                   terrainArmed: true,
                 })).forEach((x) => balls.push(x)),
-            })).forEach((x) => balls.push(x));
-          },
+            })),
+          ),
+      },
+    ],
+  },
+  recursiveshrapnel: {
+    pt: 200,
+    name: "Recursive Shrapnel",
+    group: "grenades",
+    bullets: [
+      {
+        id: "recursiveshrapnel",
+        damage: 65,
+        range: 0.625,
+        spawnMines: false,
+        weight: 1,
+        radius: 6,
+        crater: 36,
+        color: 0x003f00,
+        trailLength: 54,
+        bounce: 0.5,
+        bounceCount: 150,
+        onexplode: (b) => {
+          Array.from({ length: 15 }, (_) => ({
+            shotId: b.shotId,
+            localId: `recursiveshrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+            parentLocalId: null,
+            orbit: null,
+            x: b.x,
+            y: b.y - 4,
+            vx: Math.random() * 400 - 200,
+            vy: -Math.random() * 600,
+            weight: 1,
+            gravity: PROJECTILE_GRAVITY,
+            radius: 3,
+            crater: 9,
+            color: 0x2f5f2f,
+            damage: 5,
+            trailLength: b.trailLength,
+            trail: [],
+            age: 0,
+            dead: false,
+            bounce: 0.75,
+            bounceCount: 75,
+            mineGroup: [],
+            spawnMines: false,
+            isStaticMine: false,
+            terrainArmed: true,
+            onexplode: (b0) =>
+              Array.from({ length: 5 }, (_) => ({
+                shotId: b0.shotId,
+                localId: `shrapnel_child_child${Date.now()}_${crypto.randomUUID()}`,
+                parentLocalId: null,
+                orbit: null,
+                x: b0.x,
+                y: b0.y - 4,
+                vx: Math.random() * 400 - 200,
+                vy: -Math.random() * 600,
+                weight: 1,
+                gravity: PROJECTILE_GRAVITY,
+                radius: 2,
+                crater: 6,
+                color: 0x2f3f2f,
+                damage: 3,
+                trailLength: b0.trailLength,
+                trail: [],
+                age: 0,
+                dead: false,
+                bounce: 0,
+                bounceCount: 0,
+                mineGroup: [],
+                spawnMines: false,
+                isStaticMine: false,
+                terrainArmed: true,
+              })).forEach((x) => balls.push(x)),
+          })).forEach((x) => balls.push(x));
         },
-      ],
-    },
-    shrapnelcluster: {
-      pt: 120,
-      name: "Shrapnel Cluster",
-      bullets: [],
-      group: "grenades",
-    },
-    shrapnelfireworks: {
-      pt: 140,
-      name: "Shrapnel Fireworks",
-      group: "grenades",
-      bullets: [
-        {
-          id: "shrapnelfireworks",
-          damage: 0,
-          range: 1,
-          spawnMines: false,
-          weight: 1,
-          radius: 8,
-          crater: 0,
-          color: 0x3fbf3f,
-          trailLength: 108,
-          bounce: 0.75,
-          bounceCount: 100,
-          onexplode: (b) =>
-            balls.push({
-              shotId: b.shotId,
-              localId: `shrapnelfireworks_child_${Date.now()}`,
-              parentLocalId: null,
-              orbit: null,
-              x: b.x,
-              y: b.y - 4,
-              vx: 0,
-              vy: -400,
-              weight: 0.5,
-              gravity: PROJECTILE_GRAVITY,
-              radius: b.radius,
-              crater: 0,
-              color: b.color,
-              damage: 0,
-              trailLength: b.trailLength,
-              trail: [],
-              age: 0,
-              dead: false,
-              bounce: 0,
-              bounceCount: 0,
-              mineGroup: [],
-              spawnMines: false,
-              isStaticMine: false,
-              terrainArmed: true,
-              ontick: (b0) => {
-                if (b0.vy > 0) {
-                  b0.dead = true;
-                  const amt = 16;
-                  for (let i = 0; i < amt; i++)
-                    balls.push({
-                      shotId: b0.shotId,
-                      localId: `shrapnelfireworks_burst_${Date.now()}_${i}`,
-                      parentLocalId: null,
-                      orbit: null,
-                      x: b0.x,
-                      y: b0.y,
-                      vx: Math.cos((i / amt) * 2 * Math.PI) * 200,
-                      vy: Math.sin((i / amt) * 2 * Math.PI) * 200,
-                      weight: 1,
-                      gravity: PROJECTILE_GRAVITY,
-                      radius: 5,
-                      crater: 14,
-                      color: 0x1f5f1f,
-                      damage: 14,
-                      trailLength: 54,
-                      trail: [],
-                      age: 0,
-                      dead: false,
-                      bounce: 0.75,
-                      bounceCount: 100,
-                      mineGroup: [],
-                      spawnMines: false,
-                      isStaticMine: false,
-                      terrainArmed: true,
-                      onexplode: (b1) =>
-                        Array.from({ length: 8 }, (_) => ({
-                          shotId: b1.shotId,
-                          localId: `shrapnelfireworks_child_${Date.now()}_${crypto.randomUUID()}`,
-                          parentLocalId: null,
-                          orbit: null,
-                          x: b1.x,
-                          y: b1.y - 4,
-                          vx: Math.random() * 300 - 150,
-                          vy: -Math.random() * 400,
-                          weight: 1,
-                          gravity: PROJECTILE_GRAVITY,
-                          radius: 3,
-                          crater: 8,
-                          color: 0x1f3f1f,
-                          damage: 8,
-                          trailLength: b1.trailLength,
-                          trail: [],
-                          age: 0,
-                          dead: false,
-                          bounce: 0,
-                          bounceCount: 0,
-                          mineGroup: [],
-                          spawnMines: false,
-                          isStaticMine: false,
-                          terrainArmed: true,
-                        })).forEach((x) => balls.push(x)),
-                    });
-                }
-              },
-            }),
-        },
-      ],
-    },
-    grenadedropper: {
-      pt: 80,
-      name: "Grenade Dropper",
-      group: "grenades",
-      bullets: [
-        {
-          id: "grenadedropper",
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 30,
-          color: 0x3f9f3f,
-          trailLength: 54,
-          bounce: 0,
-          bounceCount: 0,
-          ontick: (b) =>
-            b.age > 0.25
-              ? ((_) => {
-                  b.age = 0;
+      },
+    ],
+  },
+  shrapnelcluster: {
+    pt: 120,
+    name: "Shrapnel Cluster",
+    bullets: [],
+    group: "grenades",
+  },
+  shrapnelfireworks: {
+    pt: 140,
+    name: "Shrapnel Fireworks",
+    group: "grenades",
+    bullets: [
+      {
+        id: "shrapnelfireworks",
+        damage: 0,
+        range: 1,
+        spawnMines: false,
+        weight: 1,
+        radius: 8,
+        crater: 0,
+        color: 0x3fbf3f,
+        trailLength: 108,
+        bounce: 0.75,
+        bounceCount: 100,
+        onexplode: (b) =>
+          balls.push({
+            shotId: b.shotId,
+            localId: `shrapnelfireworks_child_${Date.now()}`,
+            parentLocalId: null,
+            orbit: null,
+            x: b.x,
+            y: b.y - 4,
+            vx: 0,
+            vy: -400,
+            weight: 0.5,
+            gravity: PROJECTILE_GRAVITY,
+            radius: b.radius,
+            crater: 0,
+            color: b.color,
+            damage: 0,
+            trailLength: b.trailLength,
+            trail: [],
+            age: 0,
+            dead: false,
+            bounce: 0,
+            bounceCount: 0,
+            mineGroup: [],
+            spawnMines: false,
+            isStaticMine: false,
+            terrainArmed: true,
+            ontick: (b0) => {
+              if (b0.vy > 0) {
+                b0.dead = true;
+                const amt = 16;
+                for (let i = 0; i < amt; i++)
                   balls.push({
-                    shotId: b.shotId,
-                    localId: `child_${Date.now()}`,
+                    shotId: b0.shotId,
+                    localId: `shrapnelfireworks_burst_${Date.now()}_${i}`,
                     parentLocalId: null,
                     orbit: null,
-                    x: b.x,
-                    y: b.y,
-                    vx: b.vx * 0.1,
-                    vy: 0,
+                    x: b0.x,
+                    y: b0.y,
+                    vx: Math.cos((i / amt) * 2 * Math.PI) * 200,
+                    vy: Math.sin((i / amt) * 2 * Math.PI) * 200,
                     weight: 1,
                     gravity: PROJECTILE_GRAVITY,
-                    radius: 6,
-                    crater: 36,
-                    color: 0x007f00,
-                    damage: 80,
+                    radius: 5,
+                    crater: 14,
+                    color: 0x1f5f1f,
+                    damage: 14,
                     trailLength: 54,
                     trail: [],
                     age: 0,
                     dead: false,
-                    bounce: 0.6,
+                    bounce: 0.75,
                     bounceCount: 100,
                     mineGroup: [],
                     spawnMines: false,
                     isStaticMine: false,
                     terrainArmed: true,
-                  });
-                })()
-              : 0,
-        },
-      ],
-    },
-    shrapneldropper: {
-      pt: 110,
-      name: "Shrapnel Dropper",
-      group: "grenades",
-      bullets: [
-        {
-          id: "shrapneldropper",
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 30,
-          color: 0x1f7f1f,
-          trailLength: 54,
-          bounce: 0,
-          bounceCount: 0,
-          ontick: (b) =>
-            b.age > 0.25
-              ? ((_) => {
-                  b.age = 0;
-                  balls.push({
-                    shotId: b.shotId,
-                    localId: `child_${Date.now()}`,
-                    parentLocalId: null,
-                    orbit: null,
-                    x: b.x,
-                    y: b.y,
-                    vx: b.vx * 0.1,
-                    vy: 0,
-                    weight: 1,
-                    gravity: PROJECTILE_GRAVITY,
-                    radius: 8,
-                    crater: 42,
-                    color: 0x005f00,
-                    damage: 75,
-                    trailLength: 54,
-                    trail: [],
-                    age: 0,
-                    dead: false,
-                    bounce: 0.5,
-                    bounceCount: 100,
-                    mineGroup: [],
-                    spawnMines: false,
-                    isStaticMine: false,
-                    terrainArmed: true,
-                    onexplode: (b0) =>
-                      Array.from({ length: 20 }, (_) => ({
-                        shotId: b0.shotId,
-                        localId: `shrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
+                    onexplode: (b1) =>
+                      Array.from({ length: 8 }, (_) => ({
+                        shotId: b1.shotId,
+                        localId: `shrapnelfireworks_child_${Date.now()}_${crypto.randomUUID()}`,
                         parentLocalId: null,
                         orbit: null,
-                        x: b0.x,
-                        y: b0.y - 4,
-                        vx: Math.random() * 400 - 200,
-                        vy: -Math.random() * 600,
+                        x: b1.x,
+                        y: b1.y - 4,
+                        vx: Math.random() * 300 - 150,
+                        vy: -Math.random() * 400,
                         weight: 1,
                         gravity: PROJECTILE_GRAVITY,
-                        radius: 4,
-                        crater: 12,
+                        radius: 3,
+                        crater: 8,
                         color: 0x1f3f1f,
-                        damage: 12,
-                        trailLength: 54,
+                        damage: 8,
+                        trailLength: b1.trailLength,
                         trail: [],
                         age: 0,
                         dead: false,
@@ -778,292 +655,811 @@ let attacks = {
                         terrainArmed: true,
                       })).forEach((x) => balls.push(x)),
                   });
-                })()
-              : 0,
-        },
-      ],
-    },
-    grenadecluster: {
-      pt: 80,
-      name: "Grenade Cluster",
-      bullets: [],
-      group: "grenades",
-    },
-    grenadefireworks: {
-      pt: 100,
-      name: "Grenade Fireworks",
-      group: "grenades",
-      onexplode: (b) =>
-        balls.push({
-          shotId: b.shotId,
-          localId: `child_${Date.now()}`,
-          parentLocalId: null,
-          orbit: null,
-          x: b.x,
-          y: b.y,
-          vx: 0,
-          vy: -400,
-          weight: 1,
-          gravity: PROJECTILE_GRAVITY,
-          radius: 6,
-          crater: 18,
-          color: 0xff4400,
-          damage: 30,
-          trailLength: 34,
-          trail: [],
-          age: 0,
-          dead: false,
-          bounce: 0,
-          bounceCount: 0,
-          mineGroup: [],
-          spawnMines: false,
-          isStaticMine: false,
-          terrainArmed: true,
-        }),
-      bullets: [
-        {
-          id: "grenadefireworks",
-          damage: 0,
-          range: 1,
-          spawnMines: false,
-          weight: 1,
-          radius: 8,
-          crater: 0,
-          color: 0x7fff7f,
-          trailLength: 108,
-          bounce: 0.75,
-          bounceCount: 100,
-          onexplode: (b) =>
-            balls.push({
-              shotId: b.shotId,
-              localId: `grenadefireworks_child_${Date.now()}`,
-              parentLocalId: null,
-              orbit: null,
-              x: b.x,
-              y: b.y - 4,
-              vx: 0,
-              vy: -400,
-              weight: 0.5,
-              gravity: PROJECTILE_GRAVITY,
-              radius: b.radius,
-              crater: 0,
-              color: b.color,
-              damage: 30,
-              trailLength: b.trailLength,
-              trail: [],
-              age: 0,
-              dead: false,
-              bounce: 0,
-              bounceCount: 0,
-              mineGroup: [],
-              spawnMines: false,
-              isStaticMine: false,
-              terrainArmed: true,
-              ontick: (b0) => {
-                if (b0.vy > 0) {
-                  b0.dead = true;
-                  const amt = 16;
-                  for (let i = 0; i < amt; i++)
-                    balls.push({
-                      id: "grenadecluster" + i,
+              }
+            },
+          }),
+      },
+    ],
+  },
+  grenadedropper: {
+    pt: 80,
+    name: "Grenade Dropper",
+    group: "grenades",
+    bullets: [
+      {
+        id: "grenadedropper",
+        damage: 30,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 30,
+        color: 0x3f9f3f,
+        trailLength: 54,
+        bounce: 0,
+        bounceCount: 0,
+        ontick: (b) =>
+          b.age > 0.25
+            ? ((_) => {
+                b.age = 0;
+                balls.push({
+                  shotId: b.shotId,
+                  localId: `child_${Date.now()}`,
+                  parentLocalId: null,
+                  orbit: null,
+                  x: b.x,
+                  y: b.y,
+                  vx: b.vx * 0.1,
+                  vy: 0,
+                  weight: 1,
+                  gravity: PROJECTILE_GRAVITY,
+                  radius: 6,
+                  crater: 36,
+                  color: 0x007f00,
+                  damage: 80,
+                  trailLength: 54,
+                  trail: [],
+                  age: 0,
+                  dead: false,
+                  bounce: 0.6,
+                  bounceCount: 100,
+                  mineGroup: [],
+                  spawnMines: false,
+                  isStaticMine: false,
+                  terrainArmed: true,
+                });
+              })()
+            : 0,
+      },
+    ],
+  },
+  shrapneldropper: {
+    pt: 110,
+    name: "Shrapnel Dropper",
+    group: "grenades",
+    bullets: [
+      {
+        id: "shrapneldropper",
+        damage: 30,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 30,
+        color: 0x1f7f1f,
+        trailLength: 54,
+        bounce: 0,
+        bounceCount: 0,
+        ontick: (b) =>
+          b.age > 0.25
+            ? ((_) => {
+                b.age = 0;
+                balls.push({
+                  shotId: b.shotId,
+                  localId: `child_${Date.now()}`,
+                  parentLocalId: null,
+                  orbit: null,
+                  x: b.x,
+                  y: b.y,
+                  vx: b.vx * 0.1,
+                  vy: 0,
+                  weight: 1,
+                  gravity: PROJECTILE_GRAVITY,
+                  radius: 8,
+                  crater: 42,
+                  color: 0x005f00,
+                  damage: 75,
+                  trailLength: 54,
+                  trail: [],
+                  age: 0,
+                  dead: false,
+                  bounce: 0.5,
+                  bounceCount: 100,
+                  mineGroup: [],
+                  spawnMines: false,
+                  isStaticMine: false,
+                  terrainArmed: true,
+                  onexplode: (b0) =>
+                    Array.from({ length: 20 }, (_) => ({
                       shotId: b0.shotId,
-                      localId: `fireworks_child_child_${Date.now()}`,
+                      localId: `shrapnel_child_${Date.now()}_${crypto.randomUUID()}`,
                       parentLocalId: null,
                       orbit: null,
                       x: b0.x,
-                      y: b0.y,
-                      vx: Math.cos((i / amt) * 2 * Math.PI) * 150,
-                      vy: Math.sin((i / amt) * 2 * Math.PI) * 150,
-                      weight: 0.625,
+                      y: b0.y - 4,
+                      vx: Math.random() * 400 - 200,
+                      vy: -Math.random() * 600,
+                      weight: 1,
                       gravity: PROJECTILE_GRAVITY,
-                      radius: 6,
-                      crater: 24,
-                      color: 0x007f00,
-                      damage: 40,
+                      radius: 4,
+                      crater: 12,
+                      color: 0x1f3f1f,
+                      damage: 12,
                       trailLength: 54,
                       trail: [],
                       age: 0,
                       dead: false,
-                      bounce: 0.75,
-                      bounceCount: 100,
-                      mineGroup: [],
-                      spawnMines: false,
-                      isStaticMine: false,
-                      terrainArmed: true,
-                    });
-                }
-              },
-            }),
-        },
-      ],
-    },
-    fireworks: {
-      pt: 60,
-      name: "Fireworks",
-      group: "fireworks",
-      onexplode: (b) =>
-        balls.push({
-          shotId: b.shotId,
-          localId: `child_${Date.now()}`,
-          parentLocalId: null,
-          orbit: null,
-          x: b.x,
-          y: b.y,
-          vx: 0,
-          vy: -400,
-          weight: 1,
-          gravity: PROJECTILE_GRAVITY,
-          radius: 6,
-          crater: 18,
-          color: 0xff4400,
-          damage: 30,
-          trailLength: 34,
-          trail: [],
-          age: 0,
-          dead: false,
-          bounce: 0,
-          bounceCount: 0,
-          mineGroup: [],
-          spawnMines: false,
-          isStaticMine: false,
-          terrainArmed: true,
-        }),
-      bullets: [
-        {
-          id: "fireworks",
-          damage: 0,
-          range: 1,
-          spawnMines: false,
-          weight: 1,
-          radius: 8,
-          crater: 0,
-          color: 0xffff7f,
-          trailLength: 108,
-          bounce: 0.75,
-          bounceCount: 100,
-          onexplode: (b) =>
-            balls.push({
-              shotId: b.shotId,
-              localId: `fireworks_child_${Date.now()}`,
-              parentLocalId: null,
-              orbit: null,
-              x: b.x,
-              y: b.y - 4,
-              vx: 0,
-              vy: -400,
-              weight: 0.5,
-              gravity: PROJECTILE_GRAVITY,
-              radius: b.radius,
-              crater: 0,
-              color: b.color,
-              damage: 30,
-              trailLength: b.trailLength,
-              trail: b.trail,
-              age: 0,
-              dead: false,
-              bounce: 0,
-              bounceCount: 0,
-              mineGroup: [],
-              spawnMines: false,
-              isStaticMine: false,
-              terrainArmed: true,
-              ontick: (b0) => {
-                if (b0.vy > 0) {
-                  b0.dead = true;
-                  const amt = 16;
-                  for (let i = 0; i < amt; i++)
-                    balls.push({
-                      shotId: b0.shotId,
-                      localId: `fireworks_child_child_${Date.now()}`,
-                      parentLocalId: null,
-                      orbit: null,
-                      x: b0.x,
-                      y: b0.y,
-                      vx: Math.cos((i / amt) * 2 * Math.PI) * 300,
-                      vy: Math.sin((i / amt) * 2 * Math.PI) * 300,
-                      weight: 1,
-                      gravity: PROJECTILE_GRAVITY,
-                      radius: b0.radius / 1.5,
-                      crater: 16,
-                      color: b0.color,
-                      damage: 30,
-                      trailLength: b0.trailLength,
-                      trail: [],
-                      age: 0,
-                      dead: false,
                       bounce: 0,
                       bounceCount: 0,
                       mineGroup: [],
                       spawnMines: false,
                       isStaticMine: false,
                       terrainArmed: true,
-                    });
-                }
-              },
-            }),
-        },
-      ],
-    },
-    ceriumbomb: {
-      pt: 200,
-      name: "Cerium bomb",
-      group: "fireworks",
-      onexplode: (b) =>
-        balls.push({
-          shotId: b.shotId,
-          localId: `child_${Date.now()}`,
-          parentLocalId: null,
-          orbit: null,
-          x: b.x,
-          y: b.y,
-          vx: 0,
-          vy: -500,
-          weight: 1,
-          gravity: PROJECTILE_GRAVITY,
-          radius: 6,
-          crater: 18,
-          color: 0xff4400,
-          damage: 30,
-          trailLength: 34,
-          trail: [],
-          age: 0,
-          dead: false,
-          bounce: 0,
-          bounceCount: 0,
-          mineGroup: [],
-          spawnMines: false,
-          isStaticMine: false,
-          terrainArmed: true,
-        }),
-      bullets: [
-        {
-          id: "ceriumbomb",
-          damage: 0,
+                    })).forEach((x) => balls.push(x)),
+                });
+              })()
+            : 0,
+      },
+    ],
+  },
+  grenadecluster: {
+    pt: 80,
+    name: "Grenade Cluster",
+    bullets: [],
+    group: "grenades",
+  },
+  grenadefireworks: {
+    pt: 100,
+    name: "Grenade Fireworks",
+    group: "grenades",
+    onexplode: (b) =>
+      balls.push({
+        shotId: b.shotId,
+        localId: `child_${Date.now()}`,
+        parentLocalId: null,
+        orbit: null,
+        x: b.x,
+        y: b.y,
+        vx: 0,
+        vy: -400,
+        weight: 1,
+        gravity: PROJECTILE_GRAVITY,
+        radius: 6,
+        crater: 18,
+        color: 0xff4400,
+        damage: 30,
+        trailLength: 34,
+        trail: [],
+        age: 0,
+        dead: false,
+        bounce: 0,
+        bounceCount: 0,
+        mineGroup: [],
+        spawnMines: false,
+        isStaticMine: false,
+        terrainArmed: true,
+      }),
+    bullets: [
+      {
+        id: "grenadefireworks",
+        damage: 0,
+        range: 1,
+        spawnMines: false,
+        weight: 1,
+        radius: 8,
+        crater: 0,
+        color: 0x7fff7f,
+        trailLength: 108,
+        bounce: 0.75,
+        bounceCount: 100,
+        onexplode: (b) =>
+          balls.push({
+            shotId: b.shotId,
+            localId: `grenadefireworks_child_${Date.now()}`,
+            parentLocalId: null,
+            orbit: null,
+            x: b.x,
+            y: b.y - 4,
+            vx: 0,
+            vy: -400,
+            weight: 0.5,
+            gravity: PROJECTILE_GRAVITY,
+            radius: b.radius,
+            crater: 0,
+            color: b.color,
+            damage: 30,
+            trailLength: b.trailLength,
+            trail: [],
+            age: 0,
+            dead: false,
+            bounce: 0,
+            bounceCount: 0,
+            mineGroup: [],
+            spawnMines: false,
+            isStaticMine: false,
+            terrainArmed: true,
+            ontick: (b0) => {
+              if (b0.vy > 0) {
+                b0.dead = true;
+                const amt = 16;
+                for (let i = 0; i < amt; i++)
+                  balls.push({
+                    id: "grenadecluster" + i,
+                    shotId: b0.shotId,
+                    localId: `fireworks_child_child_${Date.now()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b0.x,
+                    y: b0.y,
+                    vx: Math.cos((i / amt) * 2 * Math.PI) * 150,
+                    vy: Math.sin((i / amt) * 2 * Math.PI) * 150,
+                    weight: 0.625,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: 6,
+                    crater: 24,
+                    color: 0x007f00,
+                    damage: 40,
+                    trailLength: 54,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0.75,
+                    bounceCount: 100,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                  });
+              }
+            },
+          }),
+      },
+    ],
+  },
+  fireworks: {
+    pt: 60,
+    name: "Fireworks",
+    group: "fireworks",
+    onexplode: (b) =>
+      balls.push({
+        shotId: b.shotId,
+        localId: `child_${Date.now()}`,
+        parentLocalId: null,
+        orbit: null,
+        x: b.x,
+        y: b.y,
+        vx: 0,
+        vy: -400,
+        weight: 1,
+        gravity: PROJECTILE_GRAVITY,
+        radius: 6,
+        crater: 18,
+        color: 0xff4400,
+        damage: 30,
+        trailLength: 34,
+        trail: [],
+        age: 0,
+        dead: false,
+        bounce: 0,
+        bounceCount: 0,
+        mineGroup: [],
+        spawnMines: false,
+        isStaticMine: false,
+        terrainArmed: true,
+      }),
+    bullets: [
+      {
+        id: "fireworks",
+        damage: 0,
+        range: 1,
+        spawnMines: false,
+        weight: 1,
+        radius: 8,
+        crater: 0,
+        color: 0xffff7f,
+        trailLength: 108,
+        bounce: 0.75,
+        bounceCount: 100,
+        onexplode: (b) =>
+          balls.push({
+            shotId: b.shotId,
+            localId: `fireworks_child_${Date.now()}`,
+            parentLocalId: null,
+            orbit: null,
+            x: b.x,
+            y: b.y - 4,
+            vx: 0,
+            vy: -400,
+            weight: 0.5,
+            gravity: PROJECTILE_GRAVITY,
+            radius: b.radius,
+            crater: 0,
+            color: b.color,
+            damage: 30,
+            trailLength: b.trailLength,
+            trail: b.trail,
+            age: 0,
+            dead: false,
+            bounce: 0,
+            bounceCount: 0,
+            mineGroup: [],
+            spawnMines: false,
+            isStaticMine: false,
+            terrainArmed: true,
+            ontick: (b0) => {
+              if (b0.vy > 0) {
+                b0.dead = true;
+                const amt = 16;
+                for (let i = 0; i < amt; i++)
+                  balls.push({
+                    shotId: b0.shotId,
+                    localId: `fireworks_child_child_${Date.now()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b0.x,
+                    y: b0.y,
+                    vx: Math.cos((i / amt) * 2 * Math.PI) * 300,
+                    vy: Math.sin((i / amt) * 2 * Math.PI) * 300,
+                    weight: 1,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: b0.radius / 1.5,
+                    crater: 16,
+                    color: b0.color,
+                    damage: 30,
+                    trailLength: b0.trailLength,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0,
+                    bounceCount: 0,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                  });
+              }
+            },
+          }),
+      },
+    ],
+  },
+  ceriumbomb: {
+    pt: 200,
+    name: "Cerium bomb",
+    group: "fireworks",
+    onexplode: (b) =>
+      balls.push({
+        shotId: b.shotId,
+        localId: `child_${Date.now()}`,
+        parentLocalId: null,
+        orbit: null,
+        x: b.x,
+        y: b.y,
+        vx: 0,
+        vy: -500,
+        weight: 1,
+        gravity: PROJECTILE_GRAVITY,
+        radius: 6,
+        crater: 18,
+        color: 0xff4400,
+        damage: 30,
+        trailLength: 34,
+        trail: [],
+        age: 0,
+        dead: false,
+        bounce: 0,
+        bounceCount: 0,
+        mineGroup: [],
+        spawnMines: false,
+        isStaticMine: false,
+        terrainArmed: true,
+      }),
+    bullets: [
+      {
+        id: "ceriumbomb",
+        damage: 0,
+        range: 1,
+        spawnMines: false,
+        weight: 1,
+        radius: 12,
+        crater: 0,
+        color: 0xffffbf,
+        trailLength: 108,
+        bounce: 0.75,
+        bounceCount: 150,
+        onexplode: (b) =>
+          balls.push({
+            shotId: b.shotId,
+            localId: `ceriumbomb_child_${Date.now()}`,
+            parentLocalId: null,
+            orbit: null,
+            x: b.x,
+            y: b.y - 4,
+            vx: 0,
+            vy: -500,
+            weight: 0.5,
+            gravity: PROJECTILE_GRAVITY,
+            radius: b.radius,
+            crater: 0,
+            color: b.color,
+            damage: 30,
+            trailLength: b.trailLength,
+            trail: [],
+            age: 0,
+            dead: false,
+            bounce: 0,
+            bounceCount: 0,
+            mineGroup: [],
+            spawnMines: false,
+            isStaticMine: false,
+            terrainArmed: true,
+            ontick: (b0) => {
+              if (b0.vy > 0) {
+                b0.dead = true;
+                const amt = 12;
+                for (let i = 0; i < amt; i++)
+                  balls.push({
+                    shotId: b0.shotId,
+                    localId: `ceriumbomb_child_child_${Date.now()}`,
+                    parentLocalId: null,
+                    orbit: null,
+                    x: b0.x,
+                    y: b0.y,
+                    vx: Math.cos((i / amt) * 2 * Math.PI) * 400,
+                    vy: Math.sin((i / amt) * 2 * Math.PI) * 400,
+                    weight: 1,
+                    gravity: PROJECTILE_GRAVITY,
+                    radius: b0.radius / 1.5,
+                    crater: i % 2 ? 24 : 0,
+                    color: i % 2 ? b0.color : 0xffffff,
+                    damage: i % 2 ? 42 : 0,
+                    trailLength: b0.trailLength,
+                    trail: [],
+                    age: 0,
+                    dead: false,
+                    bounce: 0,
+                    bounceCount: 0,
+                    mineGroup: [],
+                    spawnMines: false,
+                    isStaticMine: false,
+                    terrainArmed: true,
+                    ontick: (b1) => {
+                      if (i % 2) return;
+                      if (b1.age > 0.5) {
+                        b1.dead = true;
+                        const a2 = 8;
+                        for (let j = 0; j < a2; j++)
+                          balls.push({
+                            shotId: b1.shotId,
+                            localId: `ceriumbomb_child_child_child_${Date.now()}`,
+                            parentLocalId: null,
+                            orbit: null,
+                            x: b1.x,
+                            y: b1.y,
+                            vx: Math.cos((j / a2) * 2 * Math.PI) * 300,
+                            vy: Math.sin((j / a2) * 2 * Math.PI) * 300,
+                            weight: 1,
+                            gravity: PROJECTILE_GRAVITY,
+                            radius: b1.radius / 1.5,
+                            crater: 18,
+                            color: b1.color,
+                            damage: 30,
+                            trailLength: b1.trailLength,
+                            trail: [],
+                            age: 0,
+                            dead: false,
+                            bounce: 0,
+                            bounceCount: 0,
+                            mineGroup: [],
+                            spawnMines: false,
+                            isStaticMine: false,
+                            terrainArmed: true,
+                          });
+                      }
+                    },
+                  });
+              }
+            },
+          }),
+      },
+    ],
+  },
+  bore: {
+    pt: 75,
+    name: "Bore",
+    group: "cluster",
+    bullets: Array.from({ length: 10 }, (_, i) => ({
+      id: "bore",
+      damage: 10,
+      range: 1,
+      spawnMines: false,
+      weight: 1,
+      radius: 5,
+      crater: 10,
+      color: 0xff7f00,
+      trailLength: 54,
+      delay: i / 60,
+    })),
+  },
+  string: {
+    pt: 60,
+    name: "String",
+    group: "cluster",
+    bullets: Array.from({ length: 10 }, (_, i) => ({
+      id: "bore",
+      damage: 4,
+      range: 1,
+      spawnMines: false,
+      weight: 1,
+      radius: 1,
+      crater: 5,
+      color: 0xffff00,
+      trailLength: 54,
+      delay: i / 60,
+    })),
+  },
+  powershot: {
+    pt: 40,
+    name: "Powershot",
+    group: "power",
+    bullets: [
+      {
+        id: "main",
+        damage: 50,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 20,
+        color: 0xffffff,
+        trailLength: 54,
+      },
+      {
+        id: "secondairy0",
+        orbit: { radius: 30, speed: 20, phase: 0 },
+        parent: "main",
+        damage: 20,
+        range: 1,
+        weight: 1,
+        radius: 3,
+        crater: 7,
+        color: 0xffffff,
+        trailLength: 54,
+        terrainArmed: false,
+      },
+      {
+        id: "secondairy1",
+        orbit: { radius: 30, speed: 20, phase: Math.PI },
+        parent: "main",
+        damage: 20,
+        range: 1,
+        weight: 0,
+        radius: 3,
+        crater: 7,
+        color: 0xffffff,
+        trailLength: 54,
+        terrainArmed: false,
+      },
+    ],
+  },
+  energyshot: {
+    pt: 250,
+    name: "Energyshot",
+    group: "power",
+    bullets: [
+      {
+        id: "main",
+        damage: 50,
+        range: 1,
+        weight: 1.25,
+        radius: 16,
+        crater: 20,
+        color: 0xbfffff,
+        trailLength: 54,
+        terrainArmed: false,
+      },
+      ...Array(4)
+        .fill(0)
+        .map((_, i) => ({
+          id: "secondairy" + i,
+          orbit: { radius: 27, speed: 30, phase: (i * Math.PI) / 2 },
+          parent: "main",
+          damage: 24,
           range: 1,
-          spawnMines: false,
           weight: 1,
-          radius: 12,
-          crater: 0,
-          color: 0xffffbf,
-          trailLength: 108,
-          bounce: 0.75,
-          bounceCount: 150,
-          onexplode: (b) =>
+          radius: 5,
+          crater: 7,
+          color: 0xffffff,
+          trailLength: 54,
+          terrainArmed: false,
+        })),
+      ...Array(8)
+        .fill(0)
+        .map((_, i) => ({
+          id: "secondairy" + (i + 4),
+          orbit: {
+            radius: 50,
+            speed: -10,
+            phase: ((i - 2) * Math.PI) / 4,
+          },
+          parent: "main",
+          damage: 16,
+          range: 1,
+          weight: 1,
+          radius: 3,
+          crater: 5,
+          color: 0xffffff,
+          trailLength: 54,
+          terrainArmed: false,
+        })),
+    ],
+  },
+  sniper: {
+    pt: 30,
+    name: "Sniper",
+    group: "snipers",
+    bullets: [
+      {
+        id: "sniper",
+        damage: 0,
+        range: 1,
+        weight: 1,
+        radius: 1,
+        crater: 1,
+        color: 0xbfbfbf,
+        trailLength: 104,
+        ontick: (b) => (b.damage += 0.25),
+      },
+    ],
+  },
+  floater: {
+    pt: 45,
+    name: "Floater",
+    group: "snipers",
+    bullets: [
+      {
+        id: "floater",
+        damage: 0,
+        range: 1,
+        weight: 1,
+        radius: 1,
+        crater: 1,
+        color: 0xbfbfbf,
+        trailLength: 104,
+        ontick: (b) => {
+          b.damage += 0.25;
+          if (b.vy > 0) {
+            b.vy = 0;
+            b.gravity = 0;
+          }
+        },
+      },
+    ],
+  },
+  dropper: {
+    pt: 50,
+    name: "Dropper",
+    group: "droppers",
+    bullets: [
+      {
+        id: "dropper",
+        damage: 30,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 30,
+        color: 0xffbf7f,
+        trailLength: 54,
+        ontick: (b) =>
+          b.age > 0.2
+            ? ((_) => {
+                b.age = 0;
+                balls.push({
+                  shotId: b.shotId,
+                  localId: `child_${Date.now()}`,
+                  parentLocalId: null,
+                  orbit: null,
+                  x: b.x,
+                  y: b.y,
+                  vx: 0,
+                  vy: 0,
+                  weight: 1,
+                  gravity: PROJECTILE_GRAVITY,
+                  radius: 6,
+                  crater: 18,
+                  color: b.color,
+                  damage: 18,
+                  trailLength: 54,
+                  trail: [],
+                  age: 0,
+                  dead: false,
+                  bounce: 0,
+                  bounceCount: 0,
+                  mineGroup: [],
+                  spawnMines: false,
+                  isStaticMine: false,
+                  terrainArmed: true,
+                });
+              })()
+            : 0,
+      },
+    ],
+  },
+  delivery: {
+    pt: 50,
+    name: "Delivery",
+    group: "droppers",
+    bullets: [
+      {
+        id: "delivery",
+        damage: 40,
+        range: 1,
+        weight: 1,
+        radius: 12,
+        crater: 36,
+        color: 0xff7f3f,
+        trailLength: 54,
+        ontick: (b) =>
+          b.age > 0.15
+            ? ((_) => {
+                b.age = 0;
+                balls.push({
+                  shotId: b.shotId,
+                  localId: `child_${Date.now()}`,
+                  parentLocalId: null,
+                  orbit: null,
+                  x: b.x,
+                  y: b.y,
+                  vx: 0,
+                  vy: 0,
+                  weight: 1,
+                  gravity: PROJECTILE_GRAVITY,
+                  radius: 4,
+                  crater: 12,
+                  color: b.color,
+                  damage: 12,
+                  trailLength: 54,
+                  trail: [],
+                  age: 0,
+                  dead: false,
+                  bounce: 0,
+                  bounceCount: 0,
+                  mineGroup: [],
+                  spawnMines: false,
+                  isStaticMine: false,
+                  terrainArmed: true,
+                });
+              })()
+            : 0,
+      },
+    ],
+  },
+  distort: {
+    pt: 70,
+    name: "Distort",
+    group: "glitch",
+    bullets: [
+      {
+        id: `distort_${Date.now()}`,
+        damage: 30,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 30,
+        color: 0xffffff,
+        trailLength: 54,
+        ontick: (b) => {
+          b.x += Math.random() * 16 - 8;
+          b.y += Math.random() * 16 - 8;
+          const ch = (_) =>
+            Math.floor(Math.random() * 4 + 12).toString(16);
+          b.color = parseInt(
+            `${ch()}${ch()}${ch()}${ch()}${ch()}${ch()}`,
+            16,
+          );
+          if (Math.random() < 0.025)
             balls.push({
               shotId: b.shotId,
-              localId: `ceriumbomb_child_${Date.now()}`,
+              localId: `child_${Date.now()}`,
               parentLocalId: null,
               orbit: null,
               x: b.x,
-              y: b.y - 4,
-              vx: 0,
-              vy: -500,
-              weight: 0.5,
+              y: b.y,
+              vx: b.vx,
+              vy: b.vy,
+              weight: b.weight,
               gravity: PROJECTILE_GRAVITY,
               radius: b.radius,
-              crater: 0,
-              color: b.color,
-              damage: 30,
+              crater: b.crater,
+              color: 0xffffff,
+              damage: b.damage,
               trailLength: b.trailLength,
               trail: [],
               age: 0,
@@ -1075,387 +1471,243 @@ let attacks = {
               isStaticMine: false,
               terrainArmed: true,
               ontick: (b0) => {
-                if (b0.vy > 0) {
-                  b0.dead = true;
-                  const amt = 12;
-                  for (let i = 0; i < amt; i++)
-                    balls.push({
-                      shotId: b0.shotId,
-                      localId: `ceriumbomb_child_child_${Date.now()}`,
-                      parentLocalId: null,
-                      orbit: null,
-                      x: b0.x,
-                      y: b0.y,
-                      vx: Math.cos((i / amt) * 2 * Math.PI) * 400,
-                      vy: Math.sin((i / amt) * 2 * Math.PI) * 400,
-                      weight: 1,
-                      gravity: PROJECTILE_GRAVITY,
-                      radius: b0.radius / 1.5,
-                      crater: i % 2 ? 24 : 0,
-                      color: i % 2 ? b0.color : 0xffffff,
-                      damage: i % 2 ? 42 : 0,
-                      trailLength: b0.trailLength,
-                      trail: [],
-                      age: 0,
-                      dead: false,
-                      bounce: 0,
-                      bounceCount: 0,
-                      mineGroup: [],
-                      spawnMines: false,
-                      isStaticMine: false,
-                      terrainArmed: true,
-                      ontick: (b1) => {
-                        if (i % 2) return;
-                        if (b1.age > 0.5) {
-                          b1.dead = true;
-                          const amt2 = 8;
-                          for (let j = 0; j < amt2; j++)
-                            balls.push({
-                              shotId: b1.shotId,
-                              localId: `ceriumbomb_child_child_child_${Date.now()}`,
-                              parentLocalId: null,
-                              orbit: null,
-                              x: b1.x,
-                              y: b1.y,
-                              vx:
-                                Math.cos((j / amt2) * 2 * Math.PI) * 300,
-                              vy:
-                                Math.sin((j / amt2) * 2 * Math.PI) * 300,
-                              weight: 1,
-                              gravity: PROJECTILE_GRAVITY,
-                              radius: b1.radius / 1.5,
-                              crater: 18,
-                              color: b1.color,
-                              damage: 30,
-                              trailLength: b1.trailLength,
-                              trail: [],
-                              age: 0,
-                              dead: false,
-                              bounce: 0,
-                              bounceCount: 0,
-                              mineGroup: [],
-                              spawnMines: false,
-                              isStaticMine: false,
-                              terrainArmed: true,
-                            });
-                        }
-                      },
-                    });
-                }
+                b0.x += Math.random() * 16 - 8;
+                b0.y += Math.random() * 16 - 8;
+                const ch = (_) =>
+                  Math.floor(Math.random() * 4 + 12).toString(16);
+                b0.color = parseInt(
+                  `${ch()}${ch()}${ch()}${ch()}${ch()}${ch()}`,
+                  16,
+                );
               },
-            }),
+            });
         },
-      ],
-    },
-    bore: {
-      pt: 75,
-      name: "Bore",
-      group: "cluster",
-      bullets: Array.from({ length: 10 }, (_, i) => ({
-        id: "bore",
-        damage: 10,
+      },
+    ],
+  },
+  bar: {
+    pt: 50,
+    name: "Bar",
+    group: "bars",
+    bullets: [
+      {
+        id: "bar",
+        damage: 30,
         range: 1,
-        spawnMines: false,
         weight: 1,
-        radius: 5,
-        crater: 10,
-        color: 0xff7f00,
+        radius: 8,
+        crater: 0,
+        color: 0xff0000,
         trailLength: 54,
-        delay: i / 60,
-      })),
-    },
-    string: {
-      pt: 60,
-      name: "String",
-      group: "cluster",
-      bullets: Array.from({ length: 10 }, (_, i) => ({
-        id: "bore",
-        damage: 4,
+        onexplode: (b) => {
+          applyRectExplosionDamage(b.x - 30, 0, b.x + 30, GAME_H, 20);
+          b.isRect = true;
+          b.rectW = 40;
+          b.rectH = GAME_H;
+        },
+      },
+    ],
+  },
+  horizon: {
+    pt: 150,
+    name: "Horizon",
+    group: "bars",
+    bullets: [
+      {
+        id: "horizon",
+        damage: 30,
         range: 1,
-        spawnMines: false,
         weight: 1,
-        radius: 1,
-        crater: 5,
-        color: 0xffff00,
+        radius: 8,
+        crater: 0,
+        color: 0xff0000,
         trailLength: 54,
-        delay: i / 60,
-      })),
-    },
-    powershot: {
-      pt: 40,
-      name: "Powershot",
-      group: "power",
-      bullets: [
-        {
-          id: "main",
-          damage: 50,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 20,
-          color: 0xffffff,
-          trailLength: 54,
+        onexplode: (b) => {
+          applyRectExplosionDamage(0, b.y + 30, GAME_W, b.y - 30, 20);
+          b.isRect = true;
+          b.rectW = 40;
+          b.rectH = GAME_H;
         },
-        {
-          id: "secondairy0",
-          orbit: { radius: 30, speed: 20, phase: 0 },
-          parent: "main",
-          damage: 20,
-          range: 1,
-          weight: 1,
-          radius: 3,
-          crater: 7,
-          color: 0xffffff,
-          trailLength: 54,
-          terrainArmed: false,
+      },
+    ],
+  },
+  serialbar: {
+    pt: 175,
+    name: "Serial bar",
+    group: "bars",
+    bullets: [
+      {
+        id: "serialbar",
+        damage: 30,
+        range: 1,
+        weight: 1,
+        radius: 8,
+        crater: 0,
+        color: 0xff0000,
+        trailLength: 54,
+        onexplode: (b) => {
+          for (let i = 0; i < 3; i++)
+            setTimeout((_) => {
+              applyRectExplosionDamage(
+                b.x - 30 + i * 120,
+                0,
+                b.x + 30 + i * 120,
+                GAME_H,
+                20,
+              );
+              if (i)
+                applyRectExplosionDamage(
+                  b.x + 30 - i * 120,
+                  0,
+                  b.x - 30 - i * 120,
+                  GAME_H,
+                  20,
+                );
+            }, i * 240);
         },
-        {
-          id: "secondairy1",
-          orbit: { radius: 30, speed: 20, phase: Math.PI },
-          parent: "main",
-          damage: 20,
-          range: 1,
-          weight: 0,
-          radius: 3,
-          crater: 7,
-          color: 0xffffff,
-          trailLength: 54,
-          terrainArmed: false,
+      },
+    ],
+  },
+  serialhorizon: {
+    pt: 250,
+    name: "Serial horizon",
+    group: "bars",
+    bullets: [
+      {
+        id: "serialhorizon",
+        damage: 30,
+        range: 1,
+        weight: 1,
+        radius: 8,
+        crater: 0,
+        color: 0xff0000,
+        trailLength: 54,
+        onexplode: (b) => {
+          for (let i = 0; i < 3; i++)
+            setTimeout((_) => {
+              applyRectExplosionDamage(
+                0,
+                b.y - 30 + i * 120,
+                GAME_W,
+                b.y + 30 + i * 120,
+                20,
+              );
+              if (i)
+                applyRectExplosionDamage(
+                  0,
+                  b.y + 30 - i * 120,
+                  GAME_W,
+                  b.y - 30 - i * 120,
+                  20,
+                );
+            }, i * 240);
         },
-      ],
-    },
-    energyshot: {
-      pt: 250,
-      name: "Energyshot",
-      group: "power",
-      bullets: [
-        {
-          id: "main",
-          damage: 50,
-          range: 1,
-          weight: 1.25,
-          radius: 16,
-          crater: 20,
-          color: 0xbfffff,
-          trailLength: 54,
-          terrainArmed: false,
-        },
-        ...Array(4)
-          .fill(0)
-          .map((_, i) => ({
-            id: "secondairy" + i,
-            orbit: { radius: 27, speed: 30, phase: (i * Math.PI) / 2 },
-            parent: "main",
-            damage: 24,
-            range: 1,
-            weight: 1,
-            radius: 5,
-            crater: 7,
-            color: 0xffffff,
-            trailLength: 54,
-            terrainArmed: false,
-          })),
-        ...Array(8)
-          .fill(0)
-          .map((_, i) => ({
-            id: "secondairy" + (i + 4),
-            orbit: {
-              radius: 50,
-              speed: -10,
-              phase: ((i - 2) * Math.PI) / 4,
-            },
-            parent: "main",
-            damage: 16,
-            range: 1,
-            weight: 1,
-            radius: 3,
-            crater: 5,
-            color: 0xffffff,
-            trailLength: 54,
-            terrainArmed: false,
-          })),
-      ],
-    },
-    sniper: {
-      pt: 30,
-      name: "Sniper",
-      group: "snipers",
-      bullets: [
-        {
-          id: "sniper",
-          damage: 0,
-          range: 1,
-          weight: 1,
-          radius: 1,
-          crater: 1,
-          color: 0xbfbfbf,
-          trailLength: 104,
-          ontick: (b) => (b.damage += 0.25),
-        },
-      ],
-    },
-    floater: {
-      pt: 45,
-      name: "Floater",
-      group: "snipers",
-      bullets: [
-        {
-          id: "floater",
-          damage: 0,
-          range: 1,
-          weight: 1,
-          radius: 1,
-          crater: 1,
-          color: 0xbfbfbf,
-          trailLength: 104,
-          ontick: (b) => {
-            b.damage += 0.25;
-            if (b.vy > 0) {
-              b.vy = 0;
-              b.gravity = 0;
-            }
-          },
-        },
-      ],
-    },
-    dropper: {
-      pt: 50,
-      name: "Dropper",
-      group: "droppers",
-      bullets: [
-        {
-          id: "dropper",
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 30,
-          color: 0xffbf7f,
-          trailLength: 54,
-          ontick: (b) =>
-            b.age > 0.2
-              ? ((_) => {
-                  b.age = 0;
-                  balls.push({
-                    shotId: b.shotId,
-                    localId: `child_${Date.now()}`,
-                    parentLocalId: null,
-                    orbit: null,
-                    x: b.x,
-                    y: b.y,
-                    vx: 0,
-                    vy: 0,
-                    weight: 1,
-                    gravity: PROJECTILE_GRAVITY,
-                    radius: 6,
-                    crater: 18,
-                    color: b.color,
-                    damage: 18,
-                    trailLength: 54,
-                    trail: [],
-                    age: 0,
-                    dead: false,
-                    bounce: 0,
-                    bounceCount: 0,
-                    mineGroup: [],
-                    spawnMines: false,
-                    isStaticMine: false,
-                    terrainArmed: true,
-                  });
-                })()
-              : 0,
-        },
-      ],
-    },
-    delivery: {
-      pt: 50,
-      name: "Delivery",
-      group: "droppers",
-      bullets: [
-        {
-          id: "delivery",
-          damage: 40,
-          range: 1,
-          weight: 1,
-          radius: 12,
-          crater: 36,
-          color: 0xff7f3f,
-          trailLength: 54,
-          ontick: (b) =>
-            b.age > 0.15
-              ? ((_) => {
-                  b.age = 0;
-                  balls.push({
-                    shotId: b.shotId,
-                    localId: `child_${Date.now()}`,
-                    parentLocalId: null,
-                    orbit: null,
-                    x: b.x,
-                    y: b.y,
-                    vx: 0,
-                    vy: 0,
-                    weight: 1,
-                    gravity: PROJECTILE_GRAVITY,
-                    radius: 4,
-                    crater: 12,
-                    color: b.color,
-                    damage: 12,
-                    trailLength: 54,
-                    trail: [],
-                    age: 0,
-                    dead: false,
-                    bounce: 0,
-                    bounceCount: 0,
-                    mineGroup: [],
-                    spawnMines: false,
-                    isStaticMine: false,
-                    terrainArmed: true,
-                  });
-                })()
-              : 0,
-        },
-      ],
-    },
-    distort: {
-      pt: 70,
-      name: "Distort",
-      group: "glitch",
-      bullets: [
-        {
-          id: `distort_${Date.now()}`,
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 10,
-          crater: 30,
-          color: 0xffffff,
-          trailLength: 54,
-          ontick: (b) => {
-            b.x += Math.random() * 16 - 8;
-            b.y += Math.random() * 16 - 8;
-            const ch = (_) =>
-              Math.floor(Math.random() * 4 + 12).toString(16);
-            b.color = parseInt(
-              `${ch()}${ch()}${ch()}${ch()}${ch()}${ch()}`,
-              16,
-            );
-            if (Math.random() < 0.025)
-              balls.push({
+      },
+    ],
+  },
+  stream: {
+    pt: 100,
+    name: "Stream",
+    group: "stream",
+    bullets: Array.from({ length: 10 }, (_, i) => ({
+      id: "stream_" + crypto.randomUUID(),
+      damage: 25 - i * 2,
+      range: 1.5 - i / 10,
+      weight: 1,
+      radius: 8 - i / 2,
+      crater: 24 - (3 * i) / 2,
+      color: 0xffbf7f,
+      trailLength: 54,
+      delay: -i / 10 + 1,
+      terrainArmed: false,
+    })),
+  },
+  sinewave: {
+    pt: 80,
+    name: "Sinewave",
+    group: "math",
+    bullets: Array.from({ length: 50 }, (_, i) => ({
+      id: "sinewave_" + crypto.randomUUID(),
+      damage: 3,
+      range: 1,
+      weight: 1,
+      radius: 3,
+      crater: 9,
+      color: 0x7fffbf,
+      trailLength: 54,
+      delay: i / 30,
+      offset: 10 * Math.sin(i / 5) - 5,
+      terrainArmed: false,
+    })),
+  },
+  cosinewave: {
+    pt: 80,
+    name: "Cosinewave",
+    group: "math",
+    bullets: Array.from({ length: 50 }, (_, i) => ({
+      id: "cosinewave_" + crypto.randomUUID(),
+      damage: 3,
+      range: 1,
+      weight: 1,
+      radius: 3,
+      crater: 9,
+      color: 0x7fff7f,
+      trailLength: 54,
+      delay: i / 30,
+      offset: 10 * Math.cos(i / 5) - 5,
+      terrainArmed: false,
+    })),
+  },
+  arctangent: {
+    pt: 85,
+    name: "Arctangent",
+    group: "math",
+    bullets: Array.from({ length: 50 }, (_, i) => ({
+      id: "arctangent_" + crypto.randomUUID(),
+      damage: 3,
+      range: 1,
+      weight: 1,
+      radius: 3,
+      crater: 9,
+      color: 0xffbf7f,
+      trailLength: 54,
+      delay: i / 30,
+      offset: 10 * Math.atan(i / 5 - 5) - 5,
+      terrainArmed: false,
+    })),
+  },
+  sodium: {
+    pt: 75,
+    name: "Sodium",
+    group: "chemicals",
+    bullets: [
+      {
+        id: "Sodium",
+        damage: 30,
+        range: 1,
+        weight: 1,
+        radius: 10,
+        crater: 30,
+        color: 0xcccccc,
+        onexplode: (b) =>
+          balls.push(
+            ...Array.from({ length: 10 }, (_) => {
+              return {
                 shotId: b.shotId,
-                localId: `child_${Date.now()}`,
+                localId: `sodium_${crypto.randomUUID()}`,
                 parentLocalId: null,
                 orbit: null,
                 x: b.x,
-                y: b.y,
-                vx: b.vx,
-                vy: b.vy,
-                weight: b.weight,
+                y: b.y - 4,
+                vx: Math.random() * 500 - 250,
+                vy: -Math.random() * 500,
+                weight: 1,
                 gravity: PROJECTILE_GRAVITY,
-                radius: b.radius,
-                crater: b.crater,
-                color: 0xffffff,
-                damage: b.damage,
-                trailLength: b.trailLength,
+                radius: 2,
+                crater: 6,
+                color: 0xff5500,
+                damage: 8,
+                trailLength: 54,
                 trail: [],
                 age: 0,
                 dead: false,
@@ -1465,254 +1717,160 @@ let attacks = {
                 spawnMines: false,
                 isStaticMine: false,
                 terrainArmed: true,
-                ontick: (b0) => {
-                  b0.x += Math.random() * 16 - 8;
-                  b0.y += Math.random() * 16 - 8;
-                  const ch = (_) =>
-                    Math.floor(Math.random() * 4 + 12).toString(16);
-                  b0.color = parseInt(
-                    `${ch()}${ch()}${ch()}${ch()}${ch()}${ch()}`,
-                    16,
-                  );
-                },
+              };
+            }),
+          ),
+      },
+    ],
+  },
+  hydrogen: {
+    pt: 100,
+    name: "Hydrogen",
+    group: "chemicals",
+    bullets: Array.from({ length: 30 }, (_, i) => ({
+      id: `hydrogen_${crypto.randomUUID()}`,
+      damage: 0,
+      range: 1.1 - Math.random() / 5,
+      weight: 0.5,
+      radius: 3,
+      crater: 0,
+      color: 0x4f4f4f,
+      offset: Math.random() * 2 - 1,
+      onexplode: (b) =>
+        balls.push(
+          ...Array.from({ length: 5 }, (_) => {
+            const ang = Math.random() * Math.PI * 2;
+            return {
+              shotId: b.shotId,
+              localId: `hydrogen_${crypto.randomUUID()}`,
+              parentLocalId: null,
+              orbit: null,
+              x: b.x + Math.sin(ang) * Math.random() * 100,
+              y: b.y + Math.cos(ang) * Math.random() * 100,
+              vx: 0,
+              vy: 0,
+              weight: 1,
+              gravity: PROJECTILE_GRAVITY,
+              radius: 2,
+              crater: 6,
+              color: 0xff5500,
+              damage: 1,
+              trailLength: 54,
+              trail: [],
+              age: 0,
+              dead: false,
+              bounce: 0,
+              bounceCount: 0,
+              mineGroup: [],
+              spawnMines: false,
+              isStaticMine: false,
+              terrainArmed: true,
+            };
+          }),
+        ),
+    })),
+  },
+  toluene: {
+    pt: 0,
+    name: "Toluene",
+    group: "chemicals",
+    bullets: Array.from({ length: 50 }, (_) => ({
+      id: `airborne_toluene_${crypto.randomUUID()}`,
+      damage: 0,
+      range: 1.25 - Math.random() / 2,
+      weight: 1,
+      radius: 5,
+      crater: 0,
+      color: 0x5f4f3f,
+      offset: Math.random() * 10 - 5,
+      bounce: 0,
+      bounceCount: 0,
+      spawnMines: false,
+      isStaticMine: false,
+      onexplode: (b) => {
+        balls.push({
+          shotId: b.shotId,
+          localId: `toluene_${crypto.randomUUID()}`,
+          parentLocalId: null,
+          orbit: null,
+          x: b.x,
+          y: b.y,
+          vx: 0,
+          vy: 0,
+          weight: 0,
+          gravity: PROJECTILE_GRAVITY,
+          radius: b.radius,
+          crater: b.crater,
+          color: b.color,
+          damage: 1,
+          trailLength: 54,
+          trail: [],
+          age: 0,
+          dead: false,
+          bounce: 0,
+          bounceCount: 0,
+          mineGroup: [],
+          spawnMines: false,
+          isStaticMine: false,
+          terrainArmed: false,
+          onexplode: (b0) =>
+            balls.push(
+              ...Array.from({ length: 5 }, (_) => {
+                const ang = Math.random() * Math.PI * 2;
+                return {
+                  shotId: b0.shotId,
+                  localId: `toluenefire_${crypto.randomUUID()}`,
+                  parentLocalId: null,
+                  orbit: null,
+                  x: b0.x + Math.sin(ang) * Math.random() * 100,
+                  y: b0.y + Math.cos(ang) * Math.random() * 100,
+                  vx: 0,
+                  vy: 0,
+                  weight: 1,
+                  gravity: PROJECTILE_GRAVITY,
+                  radius: 2,
+                  crater: 6,
+                  color: 0xff5500,
+                  damage: 1,
+                  trailLength: 54,
+                  trail: [],
+                  age: 0,
+                  dead: false,
+                  bounce: 0,
+                  bounceCount: 0,
+                  mineGroup: [],
+                  spawnMines: false,
+                  isStaticMine: false,
+                  terrainArmed: true,
+                };
+              }),
+            ),
+          ontick: (b0) => {
+            if (
+              ((Math.random() < 1e-4 && b0.age > 1) || b0.age > 4) &&
+              !balls.some(
+                (obj) =>
+                  typeof obj.localId == "string" &&
+                  obj.localId.startsWith("airborne_toluene_"),
+              )
+            )
+              balls.forEach((obj) => {
+                if (
+                  typeof obj.localId == "string" &&
+                  obj.localId.startsWith("toluene_")
+                ) {
+                  obj.dead = true;
+                  if (obj.onexplode) obj.onexplode(obj);
+                }
               });
           },
-        },
-      ],
-    },
-    bar: {
-      pt: 50,
-      name: "Bar",
-      group: "bars",
-      bullets: [
-        {
-          id: "bar",
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 8,
-          crater: 0,
-          color: 0xff0000,
-          trailLength: 54,
-          onexplode: (b) => {
-            applyRectExplosionDamage(b.x - 30, 0, b.x + 30, GAME_H, 20);
-            b.isRect = true;
-            b.rectW = 40;
-            b.rectH = GAME_H;
-          },
-        },
-      ],
-    },
-    horizon: {
-      pt: 150,
-      name: "Horizon",
-      group: "bars",
-      bullets: [
-        {
-          id: "horizon",
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 8,
-          crater: 0,
-          color: 0xff0000,
-          trailLength: 54,
-          onexplode: (b) => {
-            applyRectExplosionDamage(0, b.y + 30, GAME_W, b.y - 30, 20);
-            b.isRect = true;
-            b.rectW = 40;
-            b.rectH = GAME_H;
-          },
-        },
-      ],
-    },
-    serialbar: {
-      pt: 0,
-      name: "Serial bar",
-      group: "bars",
-      bullets: [
-        {
-          id: "serialbar",
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 8,
-          crater: 0,
-          color: 0xff0000,
-          trailLength: 54,
-          onexplode: (b) => {
-            for (let i = 0; i < 3; i++)
-              setTimeout((_) => {
-                applyRectExplosionDamage(
-                  b.x - 30 + i * 120,
-                  0,
-                  b.x + 30 + i * 120,
-                  GAME_H,
-                  20,
-                );
-                if (i)
-                  applyRectExplosionDamage(
-                    b.x + 30 - i * 120,
-                    0,
-                    b.x - 30 - i * 120,
-                    GAME_H,
-                    20,
-                  );
-              }, i * 240);
-          },
-        },
-      ],
-    },
-    serialhorizon: {
-      pt: 0,
-      name: "Serial horizon",
-      group: "bars",
-      bullets: [
-        {
-          id: "serialhorizon",
-          damage: 30,
-          range: 1,
-          weight: 1,
-          radius: 8,
-          crater: 0,
-          color: 0xff0000,
-          trailLength: 54,
-          onexplode: (b) => {
-            for (let i = 0; i < 3; i++)
-              setTimeout((_) => {
-                applyRectExplosionDamage(
-                  0,
-                  b.y - 30 + i * 120,
-                  GAME_W,
-                  b.y + 30 + i * 120,
-                  20,
-                );
-                if (i)
-                  applyRectExplosionDamage(
-                    0,
-                    b.y + 30 - i * 120,
-                    GAME_W,
-                    b.y - 30 - i * 120,
-                    20,
-                  );
-              }, i * 240);
-          },
-        },
-      ],
-    },
-    stream: {
-      pt: 100,
-      name: "Stream",
-      group: "stream",
-      bullets: Array.from({ length: 10 }, (_, i) => ({
-        id: "stream_" + crypto.randomUUID(),
-        damage: 25 - i * 2,
-        range: 1.5 - i / 10,
-        weight: 1,
-        radius: 8 - i / 2,
-        crater: 24 - (3 * i) / 2,
-        color: 0xffbf7f,
-        trailLength: 54,
-        delay: -i / 10 + 1,
-        terrainArmed: false,
-      })),
-    },
-    sinewave: {
-      pt: 80,
-      name: "Sinewave",
-      group: "math",
-      bullets: Array.from({ length: 50 }, (_, i) => ({
-        id: "sinewave_" + crypto.randomUUID(),
-        damage: 3,
-        range: 1,
-        weight: 1,
-        radius: 3,
-        crater: 9,
-        color: 0x7fffbf,
-        trailLength: 54,
-        delay: i / 30,
-        offset: 10 * Math.sin(i / 5) - 5,
-        terrainArmed: false,
-      })),
-    },
-    cosinewave: {
-      pt: 80,
-      name: "Cosinewave",
-      group: "math",
-      bullets: Array.from({ length: 50 }, (_, i) => ({
-        id: "cosinewave_" + crypto.randomUUID(),
-        damage: 3,
-        range: 1,
-        weight: 1,
-        radius: 3,
-        crater: 9,
-        color: 0x7fff7f,
-        trailLength: 54,
-        delay: i / 30,
-        offset: 10 * Math.cos(i / 5) - 5,
-        terrainArmed: false,
-      })),
-    },
-    arctangent: {
-      pt: 85,
-      name: "Arctangent",
-      group: "math",
-      bullets: Array.from({ length: 50 }, (_, i) => ({
-        id: "arctangent_" + crypto.randomUUID(),
-        damage: 3,
-        range: 1,
-        weight: 1,
-        radius: 3,
-        crater: 9,
-        color: 0xffbf7f,
-        trailLength: 54,
-        delay: i / 30,
-        offset: 10 * Math.atan(i / 5 - 5) - 5,
-        terrainArmed: false,
-      })),
-    },
+        });
+      },
+    })),
   },
-  tree = {
-    single: ["double", "moon"],
-    double: ["triple"],
-    triple: ["quadruple"],
-    quadruple: ["quintuple", "shotgun"],
-    shotgun: ["rifle"],
-    rifle: ["railgun", "bore"],
-    railgun: ["sinewave", "cosinewave", "stream"],
-    sinewave: ["arctangent"],
-    cosinewave: ["arctangent"],
-    bore: ["string", "cluster"],
-    cluster: ["shrapnelcluster", "grenadecluster"],
-    stream: ["dropper"],
-    dropper: ["delivery", "grenadedropper", "shrapneldropper"],
-    moon: ["earth", "sniper"],
-    sniper: ["floater"],
-    earth: ["sun", "powershot", "landmine"],
-    sun: ["galaxy", "bar"],
-    bar: ["serialbar", "horizon"],
-    horizon: ["serialhorizon"],
-    powershot: ["energyshot", "distort"],
-    landmine: ["grenade", "nuke", "fireworks"],
-    grenade: [
-      "shrapnel",
-      "grenaderain",
-      "grenadecluster",
-      "grenadefireworks",
-      "grenadedropper",
-    ],
-    shrapnel: [
-      "recursiveshrapnel",
-      "shrapnelrain",
-      "shrapnelcluster",
-      "shrapnelfireworks",
-      "shrapneldropper",
-    ],
-    fireworks: ["ceriumbomb", "rain"],
-    rain: ["shrapnelrain", "grenaderain"],
-  };
+};
 
-for (let i = 0; i < 10; i++) {
+for (let i = 0; i < 10; i++)
   attacks.grenadecluster.bullets.push({
     id: "grenadecluster" + i,
     damage: 40,
@@ -1727,8 +1885,7 @@ for (let i = 0; i < 10; i++) {
     trailLength: 54,
     offset: Math.random() * 10 - 5,
   });
-}
-for (let i = 0; i < 10; i++) {
+for (let i = 0; i < 10; i++)
   attacks.shrapnelcluster.bullets.push({
     id: "shrapnelcluster" + i,
     damage: 75,
@@ -1770,8 +1927,7 @@ for (let i = 0; i < 10; i++) {
         terrainArmed: true,
       })).forEach((x) => balls.push(x)),
   });
-}
-for (let i = 0; i < 5; i++) {
+for (let i = 0; i < 5; i++)
   attacks.beam.bullets.push({
     id: "beam" + i,
     damage: 6,
@@ -1782,7 +1938,6 @@ for (let i = 0; i < 5; i++) {
     color: (0xff << 16) | ((i * 40) << 8),
     trailLength: 216,
   });
-}
 for (let i = 0; i < 10; i++) {
   let rand = 6 + Math.random() * 2;
   attacks.cluster.bullets.push({
@@ -1799,7 +1954,6 @@ for (let i = 0; i < 10; i++) {
     offset: Math.random() * 10 - 5,
   });
 }
-
 const multi = [
   ["Double", 0xffff7f],
   ["Triple", 0xffff00],
@@ -1817,7 +1971,7 @@ preset = (i) => ({
   color: multi[i][1],
   trailLength: 54,
 });
-for (let i = 0; i < 7; i++) {
+for (let i = 0; i < 7; i++)
   attacks[multi[i][0].toLowerCase()] = {
     pt: i ** 0.625 * 20 + 20,
     name: multi[i][0],
@@ -1836,8 +1990,6 @@ for (let i = 0; i < 7; i++) {
         offset: i < 4 ? (idx * 30) / (i + 2) : 0,
       })),
   };
-}
-
 const cosmos = [
   ["moon", 0xd8d8ff, 3.5],
   ["earth", 0x6fd7ff, 5.5],
@@ -1855,7 +2007,7 @@ const corbit = (pr, i) => ({
   speed: 14 / (pr * 0.5),
   phase: Math.PI,
 });
-for (let i = 0; i < cosmos.length; i++) {
+for (let i = 0; i < cosmos.length; i++)
   attacks[cosmos[i][0]] = {
     pt: Math.round((cosmos[i][2] / 1.65 + 2) ** 1.5),
     name: cosmos[i][0][0].toUpperCase() + cosmos[i][0].slice(1),
@@ -1879,11 +2031,50 @@ for (let i = 0; i < cosmos.length; i++) {
             }),
       })),
   };
-}
+
+const UNLOCK_TREE = {
+  single: ["double", "moon", "grenade", "dropper", "laser"],
+  double: ["triple", "sniper", "bar", "shotgun"],
+  triple: ["quadruple", "cluster", "string", "distort"],
+  quadruple: ["quintuple", "bore"],
+  shotgun: ["rifle"],
+  rifle: ["railgun", "stream"],
+  railgun: ["sinewave", "cosinewave", "arctangent"],
+  moon: ["earth"],
+  earth: ["sun", "powershot", "landmine", "sodium"],
+  sun: ["galaxy"],
+  bar: ["horizon", "serialbar"],
+  horizon: ["serialhorizon"],
+  sniper: ["floater"],
+  powershot: ["energyshot"],
+  landmine: ["nuke"],
+  grenade: ["shrapnel", "grenaderain", "grenadefireworks", "fireworks"],
+  shrapnel: ["recursiveshrapnel", "shrapnelrain", "shrapnelfireworks"],
+  fireworks: ["ceriumbomb", "rain"],
+  dropper: ["delivery", "grenadedropper", "shrapneldropper"],
+  laser: ["beam"],
+  beam: ["laserstream"],
+  cluster: ["grenadecluster", "shrapnelcluster"],
+  sodium: ["hydrogen"],
+  hydrogen: ["toluene"],
+  toluene: ["trinitrotoluene", /*"glycerin"*/],
+  //glycerin: ["nitroglycerin"],
+  //nitric_acid: ["trinitrotoluene", "nitroglycerin"],
+  //sulfuric_acid: ["trinitrotoluene", "nitroglycerin"],
+};
+
+boundaries = [];
+((playerXP = 0),
+  (unlockedAttacks = new Set(["single"])),
+  (unlockAnimations = []),
+  (cachedTreeLayout = null),
+  (treeScrollX = 0),
+  (treeScrollY = 0),
+  (treeScrollMaxX = 0),
+  (treeScrollMaxY = 0));
 
 clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 degToRad = (d) => (d * Math.PI) / 180;
-
 function rotateVector(x, y, a) {
   const s = Math.sin(a),
     c = Math.cos(a);
@@ -1933,7 +2124,504 @@ function generateTerrain() {
   terrain = [];
   for (let x = 0; x < GAME_W; x++)
     terrain.push(clamp(GROUND_Y + terrainf(x), GROUND_START, HUD_START));
-  if (gameMode != "freeplay" && gameMode != "practice") spawnPointOrbs();
+  if (gameMode != "freeplay") spawnPointOrbs();
+  generateBoundaries();
+}
+
+function generateBoundaries() {
+  boundaries = [];
+  const shapes = ["triangle", "square", "pentagon", "hexagon", "circle"];
+  const count = 2 + Math.floor(Math.random() * 4);
+  for (let a = 0; a < count * 5 && boundaries.length < count; a++) {
+    const type = shapes[Math.floor(Math.random() * shapes.length)];
+    const r = 35 + Math.random() * 55;
+    const x = r + 90 + Math.random() * (GAME_W - (r + 90) * 2);
+    const ty = getTerrainY(x);
+    const minY = r + 60,
+      maxY = ty - r - 80;
+    if (maxY < minY) continue;
+    const y = minY + Math.random() * (maxY - minY);
+    if (
+      boundaries.some(
+        (b) => Math.hypot(x - b.cx, y - b.cy) < r + b.r + 60,
+      )
+    )
+      continue;
+    if (type == "circle") {
+      boundaries.push({ type: "circle", cx: x, cy: y, r });
+    } else {
+      const sides = { triangle: 3, square: 4, pentagon: 5, hexagon: 6 }[
+        type
+      ];
+      const rot = Math.random() * Math.PI * 2;
+      const vertices = Array.from({ length: sides }, (_, i) => ({
+        x: x + Math.cos(rot + (i * Math.PI * 2) / sides) * r,
+        y: y + Math.sin(rot + (i * Math.PI * 2) / sides) * r,
+      }));
+      boundaries.push({
+        type: "polygon",
+        sides,
+        cx: x,
+        cy: y,
+        r,
+        vertices,
+      });
+    }
+  }
+}
+function closestPointOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax,
+    dy = by - ay,
+    len2 = dx * dx + dy * dy;
+  if (len2 < 0.001) return { x: ax, y: ay };
+  const t = clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1);
+  return { x: ax + t * dx, y: ay + t * dy };
+}
+function checkBoundaryCollision(b) {
+  if ((b.boundaryBounces || 0) >= 100) return null;
+  for (const bnd of boundaries) {
+    let nx = 0,
+      ny = 0,
+      pen = 0,
+      hit = false;
+    if (bnd.type == "circle") {
+      const dx = b.x - bnd.cx,
+        dy = b.y - bnd.cy,
+        d = Math.hypot(dx, dy),
+        md = b.radius + bnd.r;
+      if (d > 0.001 && d < md) {
+        nx = dx / d;
+        ny = dy / d;
+        pen = md - d;
+        hit = true;
+      }
+    } else {
+      let minD = Infinity,
+        cx = 0,
+        cy = 0;
+      const v = bnd.vertices;
+      for (let i = 0; i < v.length; i++) {
+        const cp = closestPointOnSegment(
+          b.x,
+          b.y,
+          v[i].x,
+          v[i].y,
+          v[(i + 1) % v.length].x,
+          v[(i + 1) % v.length].y,
+        );
+        const d = Math.hypot(b.x - cp.x, b.y - cp.y);
+        if (d < minD) {
+          minD = d;
+          cx = cp.x;
+          cy = cp.y;
+        }
+      }
+      if (minD < b.radius && minD > 0.001) {
+        const dx = b.x - cx,
+          dy = b.y - cy;
+        nx = dx / minD;
+        ny = dy / minD;
+        pen = b.radius - minD;
+        hit = true;
+      }
+    }
+    if (hit) {
+      const dot = b.vx * nx + b.vy * ny;
+      if (dot < 0) return { nx, ny, pen };
+    }
+  }
+  return null;
+}
+function resolveBoundaryCollision(b, hit) {
+  b.x += hit.nx * (hit.pen + 1);
+  b.y += hit.ny * (hit.pen + 1);
+  const dot = b.vx * hit.nx + b.vy * hit.ny;
+  b.vx = (b.vx - 2 * dot * hit.nx) * 0.85;
+  b.vy = (b.vy - 2 * dot * hit.ny) * 0.85;
+  b.boundaryBounces = (b.boundaryBounces || 0) + 1;
+}
+function drawBoundaries() {
+  ctx.lineWidth = 2;
+  for (const bnd of boundaries) {
+    ctx.strokeStyle = "rgba(100,140,255,0.7)";
+    ctx.fillStyle = "rgba(40,60,160,0.18)";
+    ctx.beginPath();
+    if (bnd.type == "circle") {
+      ctx.arc(bnd.cx, bnd.cy, bnd.r, 0, Math.PI * 2);
+    } else {
+      ctx.moveTo(bnd.vertices[0].x, bnd.vertices[0].y);
+      for (let i = 1; i < bnd.vertices.length; i++)
+        ctx.lineTo(bnd.vertices[i].x, bnd.vertices[i].y);
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function getParentOf(key) {
+  for (const [p, ch] of Object.entries(UNLOCK_TREE))
+    if (ch.includes(key)) return p;
+  return null;
+}
+function getUnlockXP(key) {
+  return attacks[key]?.pt ?? 0;
+}
+function isUnlocked(key) {
+  return gameMode == "freeplay" || unlockedAttacks.has(key);
+}
+function isFirstInGroup(key) {
+  const g = attacks[key]?.group;
+  if (!g) return false;
+  return ![...unlockedAttacks].some(
+    (k) => k !== key && attacks[k]?.group == g,
+  );
+}
+function tryUnlock(key) {
+  if (key == "single" || unlockedAttacks.has(key)) return;
+  const parent = getParentOf(key);
+  if (parent && !unlockedAttacks.has(parent)) return;
+  const cost = getUnlockXP(key);
+  if (playerXP < cost) return;
+  const epic = isFirstInGroup(key);
+  playerXP -= cost;
+  unlockedAttacks.add(key);
+  saveProgress();
+  const layout = getTreeLayout();
+  const pos = layout?.positions?.[key];
+  const MTOP = 95;
+  if (pos)
+    unlockAnimations.push(
+      createUnlockAnimation(
+        pos.x - treeScrollX,
+        pos.y + MTOP - treeScrollY,
+        epic ? "epic" : "normal",
+        key,
+      ),
+    );
+}
+function grantXP(amount) {
+  playerXP += amount;
+  saveProgress();
+}
+function saveProgress() {
+  try {
+    localStorage.setItem("gxp", JSON.stringify(playerXP));
+    localStorage.setItem(
+      "gunlocked",
+      JSON.stringify([...unlockedAttacks]),
+    );
+  } catch (e) {}
+}
+function loadProgress() {
+  try {
+    const xp = localStorage.getItem("gxp");
+    if (xp !== null) playerXP = JSON.parse(xp);
+    const u = localStorage.getItem("gunlocked");
+    if (u !== null) unlockedAttacks = new Set(JSON.parse(u));
+    unlockedAttacks.add("single");
+  } catch (e) {
+    playerXP = 0;
+    unlockedAttacks = new Set(["single"]);
+  }
+}
+function reset() {
+  unlockedAttacks = new Set(['single']);
+  playerXP = 0;
+  saveProgress();
+}
+function getTreeLayout() {
+  if (cachedTreeLayout) return cachedTreeLayout;
+  const NW = 140,
+    NH = 42,
+    HG = 14,
+    VG = 76;
+  const sw = {};
+  function subW(k) {
+    if (sw[k] !== undefined) return sw[k];
+    const ch = UNLOCK_TREE[k] || [];
+    if (!ch.length) return (sw[k] = NW);
+    return (sw[k] = Math.max(
+      NW,
+      ch.reduce((s, c) => s + subW(c), 0) + HG * (ch.length - 1),
+    ));
+  }
+  Object.keys(UNLOCK_TREE).forEach((k) => subW(k));
+  const positions = {};
+  const visited = new Set();
+  function place(k, lx, depth) {
+    if (visited.has(k)) return;
+    visited.add(k);
+    const ch = UNLOCK_TREE[k] || [];
+    const y = 70 + NH / 2 + depth * (NH + VG);
+    if (!ch.length) {
+      positions[k] = { x: lx + NW / 2, y, w: NW, h: NH };
+      return lx + NW;
+    }
+    let cx = lx;
+    const cxs = [];
+    ch.forEach((c, i) => {
+      if (i > 0) cx += HG;
+      cxs.push(cx + sw[c] / 2);
+      place(c, cx, depth + 1);
+      cx += sw[c];
+    });
+    positions[k] = {
+      x: (cxs[0] + cxs[cxs.length - 1]) / 2,
+      y,
+      w: NW,
+      h: NH,
+    };
+    return lx + sw[k];
+  }
+  place("single", 60, 0);
+  const allX = Object.values(positions).map((p) => p.x),
+    allY = Object.values(positions).map((p) => p.y);
+  return (cachedTreeLayout = {
+    positions,
+    totalW: Math.max(...allX) + NW / 2 + 80,
+    totalH: Math.max(...allY) + NH / 2 + 60,
+    NW,
+    NH,
+  });
+}
+
+function createUnlockAnimation(x, y, type, key) {
+  const count = type == "epic" ? 50 : 20;
+  const color = attacks[key]?.bullets?.[0]?.color ?? 0xffffff;
+  return {
+    x,
+    y,
+    type,
+    color,
+    createdAt: Date.now(),
+    duration: type == "epic" ? 2000 : 900,
+    particles: Array.from({ length: count }, (_, i) => {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+      const spd =
+        (type == "epic" ? 180 : 90) +
+        Math.random() * (type == "epic" ? 180 : 90);
+      return {
+        x: x + (Math.random() - 0.5) * 16,
+        y: y + (Math.random() - 0.5) * 16,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd,
+        sz:
+          type == "epic"
+            ? 3 + Math.random() * 4
+            : 2 + Math.random() * 2.5,
+      };
+    }),
+  };
+}
+function drawUnlockAnimations() {
+  const now = Date.now();
+  for (let ai = unlockAnimations.length - 1; ai >= 0; ai--) {
+    const anim = unlockAnimations[ai];
+    const prog = (now - anim.createdAt) / anim.duration;
+    if (prog >= 1) {
+      unlockAnimations.splice(ai, 1);
+      continue;
+    }
+    const dt = 1 / 60;
+    if (anim.type == "epic" && prog < 0.08) {
+      ctx.fillStyle = `rgba(255,204,0,${(1 - prog / 0.08) * 0.22})`;
+      ctx.fillRect(0, 0, GAME_W, GAME_H);
+    }
+    if (anim.type == "epic") {
+      ctx.beginPath();
+      ctx.arc(anim.x, anim.y, prog * 200, 0, Math.PI * 2);
+      ctx.strokeStyle = colorToRgba(
+        anim.color,
+        Math.max(0, 1 - prog * 2),
+      );
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+    for (const p of anim.particles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 220 * dt;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.sz, 0, Math.PI * 2);
+      ctx.fillStyle = colorToRgba(
+        anim.color,
+        Math.max(0, 1 - prog * 1.6),
+      );
+      ctx.fill();
+    }
+  }
+}
+
+function drawPaths() {
+  ctx.fillStyle = "#16162a";
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  drawBackButton();
+  ctx.fillStyle = "#aff";
+  ctx.font = "bold 36px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Weapon Paths", GAME_W / 2, 50);
+  ctx.fillStyle = "#ffff7f";
+  ctx.font = "bold 20px monospace";
+  ctx.textAlign = "right";
+  ctx.fillText("XP: " + Math.floor(playerXP), GAME_W - 16, 50);
+  ctx.fillStyle = "rgba(150,220,255,0.4)";
+  ctx.font = "14px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText(
+    "Wheel=scroll \u2502 Shift+Wheel=horizontal \u2502 Click node to unlock",
+    GAME_W / 2,
+    78,
+  );
+  const layout = getTreeLayout();
+  const MTOP = 95;
+  treeScrollMaxX = Math.max(0, layout.totalW - GAME_W + 40);
+  treeScrollMaxY = Math.max(0, layout.totalH - (GAME_H - MTOP) + 20);
+  treeScrollX = clamp(treeScrollX, 0, treeScrollMaxX);
+  treeScrollY = clamp(treeScrollY, 0, treeScrollMaxY);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, MTOP, GAME_W, GAME_H - MTOP);
+  ctx.clip();
+  ctx.translate(-treeScrollX, MTOP - treeScrollY);
+
+  for (const [pk, children] of Object.entries(UNLOCK_TREE)) {
+    const pp = layout.positions[pk];
+    if (!pp) continue;
+    for (const ck of children) {
+      const cp = layout.positions[ck];
+      if (!cp) continue;
+      const unlk = unlockedAttacks.has(ck),
+        pUnlk = unlockedAttacks.has(pk);
+      ctx.beginPath();
+      ctx.moveTo(pp.x, pp.y + layout.NH / 2);
+      ctx.lineTo(cp.x, cp.y - layout.NH / 2);
+      ctx.strokeStyle = unlk ? "#00aa44" : pUnlk ? "#2244aa" : "#1a1a2a";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      const cost = getUnlockXP(ck);
+      if (cost > 0) {
+        const mx = (pp.x + cp.x) / 2,
+          my = (pp.y + cp.y) / 2;
+        ctx.fillStyle = unlk ? "#00aa44" : pUnlk ? "#3355aa" : "#1a1a2a";
+        ctx.font = "11px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(cost + " XP", mx, my);
+      }
+    }
+  }
+
+  const { NW, NH } = layout;
+  for (const [key, pos] of Object.entries(layout.positions)) {
+    if (!attacks[key]) continue;
+    const unlk = unlockedAttacks.has(key),
+      parent = getParentOf(key),
+      pUnlk = !parent || unlockedAttacks.has(parent);
+    const cost = getUnlockXP(key),
+      avail = !unlk && pUnlk,
+      golden = avail && playerXP >= cost;
+    const nx = pos.x - NW / 2,
+      ny = pos.y - NH / 2;
+    ctx.fillStyle = unlk
+      ? "#081a10"
+      : golden
+        ? "#1a1000"
+        : avail
+          ? "#08101a"
+          : "#050507";
+    ctx.fillRect(nx, ny, NW, NH);
+    if (golden) {
+      ctx.save();
+      ctx.shadowColor = "#ffcc00";
+      ctx.shadowBlur = 14;
+    }
+    ctx.strokeStyle = unlk
+      ? "#00cc55"
+      : golden
+        ? "#ffcc00"
+        : avail
+          ? "#1a3366"
+          : "#0d0d18";
+    ctx.lineWidth = unlk || golden ? 2 : 1;
+    ctx.strokeRect(nx, ny, NW, NH);
+    if (golden) ctx.restore();
+    const atk = attacks[key];
+    ctx.fillStyle = unlk
+      ? "#00ff88"
+      : golden
+        ? "#ffcc00"
+        : avail
+          ? "#3355aa"
+          : "#1a1a2a";
+    ctx.font = (unlk ? "bold " : "") + "13px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(trimLabel(atk?.name || key, 17), pos.x, pos.y - 7);
+    ctx.font = "11px monospace";
+    if (unlk) {
+      ctx.fillStyle = "#00aa44";
+      ctx.fillText("\u2713 unlocked", pos.x, pos.y + 8);
+    } else if (key == "single") {
+      ctx.fillStyle = "#00aa44";
+      ctx.fillText("free", pos.x, pos.y + 8);
+    } else {
+      ctx.fillStyle = golden ? "#ffcc00" : avail ? "#2244aa" : "#111118";
+      ctx.fillText(cost + " XP", pos.x, pos.y + 8);
+    }
+
+    const bullets = atk?.bullets || [];
+    const ns = Math.min(4, bullets.length);
+    if (ns > 0) {
+      let sx = nx + 4;
+      for (let i = 0; i < ns; i++) {
+        ctx.fillStyle =
+          unlk || golden
+            ? colorToCss(bullets[i].color ?? atk.color ?? 0xffffff)
+            : "#1a1a22";
+        ctx.fillRect(sx, ny + 3, 8, 8);
+        sx += 10;
+      }
+    }
+  }
+  ctx.restore();
+  drawUnlockAnimations();
+  if (treeScrollMaxX > 0) {
+    const bw = GAME_W * (GAME_W / layout.totalW);
+    const bx = (treeScrollX / treeScrollMaxX) * (GAME_W - bw);
+    ctx.fillStyle = "rgba(100,150,255,0.35)";
+    ctx.fillRect(bx, GAME_H - 6, bw, 6);
+  }
+  if (treeScrollMaxY > 0) {
+    const bh = (GAME_H - MTOP) * ((GAME_H - MTOP) / layout.totalH);
+    const by =
+      MTOP + (treeScrollY / treeScrollMaxY) * (GAME_H - MTOP - bh);
+    ctx.fillStyle = "rgba(100,150,255,0.35)";
+    ctx.fillRect(GAME_W - 6, by, 6, bh);
+  }
+}
+function handlePathsClick() {
+  if (mouseX >= 30 && mouseX <= 190 && mouseY >= 30 && mouseY <= 80) {
+    navigateBack();
+    return;
+  }
+  const layout = getTreeLayout();
+  if (!layout) return;
+  const MTOP = 95,
+    tx = mouseX + treeScrollX,
+    ty = mouseY - MTOP + treeScrollY,
+    { NW, NH } = layout;
+  for (const [key, pos] of Object.entries(layout.positions))
+    if (
+      tx >= pos.x - NW / 2 &&
+      tx <= pos.x + NW / 2 &&
+      ty >= pos.y - NH / 2 &&
+      ty <= pos.y + NH / 2
+    ) {
+      tryUnlock(key);
+      return;
+    }
 }
 
 function pickWeighted(table) {
@@ -1946,18 +2634,17 @@ function pickWeighted(table) {
   return table[table.length - 1];
 }
 
-// FIX 4: orbs can spawn anywhere ≥108 px from terrain and all 4 sides
 function spawnPointOrbs() {
   const count = pickWeighted(ORB_COUNTS).n;
   for (let i = 0; i < count; i++) {
-    const orb = pickWeighted(ORB_VALUES);
-    const radius = 30 * Math.sqrt(orb.chance);
-    const margin = 108;
+    const orb = pickWeighted(ORB_VALUES),
+      radius = 30 * Math.sqrt(orb.chance),
+      margin = 108;
     const x =
       margin + radius + Math.random() * (GAME_W - (margin + radius) * 2);
-    const terrainY = getTerrainY(x);
-    const minY = margin + radius;
-    const maxY = terrainY - margin - radius;
+    const terrainY = getTerrainY(x),
+      minY = margin + radius,
+      maxY = terrainY - margin - radius;
     if (maxY < minY) continue;
     const y = minY + Math.random() * (maxY - minY);
     pointOrbs.push({ x, y, v: orb.v, color: orb.color, radius });
@@ -1974,10 +2661,13 @@ function getAttackPt(key) {
 }
 
 function getVisibleAttackList() {
-  const al = getAttackList(),
-    groupAnchors = new Map(),
+  const baseList =
+    gameMode == "freeplay"
+      ? getAttackList()
+      : getAttackList().filter((a) => isUnlocked(a.key));
+  const groupAnchors = new Map(),
     noGroup = [];
-  for (const a of al) {
+  for (const a of baseList) {
     const atk = attacks[a.key],
       group = atk?.group;
     if (!group) {
@@ -1988,8 +2678,8 @@ function getVisibleAttackList() {
       groupAnchors.set(group, a);
     } else {
       const existing = groupAnchors.get(group),
-        existingAtk = attacks[existing.key],
-        aPriority = atk?.priority ?? Infinity,
+        existingAtk = attacks[existing.key];
+      const aPriority = atk?.priority ?? Infinity,
         existingPriority = existingAtk?.priority ?? Infinity;
       const anyHasPriority =
         aPriority !== Infinity || existingPriority !== Infinity;
@@ -2035,17 +2725,28 @@ fitCanvas();
 window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   keys[k] = true;
+
+  if (screen == "paths") {
+    if (k == "arrowleft")
+      treeScrollX = clamp(treeScrollX - 120, 0, treeScrollMaxX);
+    if (k == "arrowright")
+      treeScrollX = clamp(treeScrollX + 120, 0, treeScrollMaxX);
+    if (k == "arrowup")
+      treeScrollY = clamp(treeScrollY - 80, 0, treeScrollMaxY);
+    if (k == "arrowdown")
+      treeScrollY = clamp(treeScrollY + 80, 0, treeScrollMaxY);
+  }
   if (!gameRunning || e.repeat) return;
   if (k == "q") cycleAttack(-1);
   if (k == "e") cycleAttack(1);
   const n = Number(k);
   if (Number.isInteger(n) && n > 0) selectAttack(n - 1);
-  if (e.key.altKey && e.key.toLowerCase() == "r" && !e.repeat) {
+  if (e.altKey && k == "r" && !e.repeat) {
     if (!mediaRecorder || mediaRecorder.state == "inactive")
       startRecording();
     else stopRecording();
   }
-  if (k === "escape" && screen !== "menu" && screen !== "game")
+  if (k == "escape" && screen !== "menu" && screen !== "game")
     navigateBack();
   if (k == "w" || k == "s") {
     const current = getSelectedAttack();
@@ -2141,7 +2842,15 @@ function getSelectedAttack() {
   const l = getAttackList();
   if (!l.length) return null;
   selectedAttackIndex = clamp(selectedAttackIndex, 0, l.length - 1);
-  return l[selectedAttackIndex];
+  const sel = l[selectedAttackIndex];
+
+  if (gameMode !== "freeplay" && !isUnlocked(sel?.key)) {
+    const visible = getVisibleAttackList();
+    if (!visible.length) return null;
+    selectedAttackIndex = l.findIndex((a) => a.key == visible[0].key);
+    return visible[0];
+  }
+  return sel;
 }
 function selectAttack(i) {
   const l = getAttackList();
@@ -2253,7 +2962,6 @@ function update() {
   }
   updateRectFlashes();
   updateProjectiles(dt, now);
-  // FIX 3: fade out saved trails over time
   for (let i = fadingTrails.length - 1; i >= 0; i--) {
     fadingTrails[i].alpha -= dt * 1.5;
     if (fadingTrails[i].alpha <= 0) fadingTrails.splice(i, 1);
@@ -2269,12 +2977,13 @@ function update() {
       o.radius + PLAYER_RADIUS
     ) {
       points[currentPlayer - 1] += o.v;
+      if (gameMode != "freeplay") grantXP(o.v);
       pointOrbs.splice(i, 1);
     }
   }
   if (
     playerHealth <= 0 ||
-    (gameMode === "singledevice" && player2Health <= 0)
+    (gameMode == "singledevice" && player2Health <= 0)
   ) {
     gameOver = true;
     winner = playerHealth <= 0 ? 2 : 1;
@@ -2293,8 +3002,7 @@ function startTurn(n) {
   hasShot = false;
   fuel = fuelMax;
   turnTimer = 0;
-  if (terrain.length && gameMode != "freeplay" && gameMode != "practice")
-    spawnPointOrbs();
+  if (terrain.length && gameMode != "freeplay") spawnPointOrbs();
 }
 function endTurn() {
   turnActive = false;
@@ -2331,6 +3039,7 @@ function updateProjectiles(dt, now) {
       const o = pointOrbs[i];
       if (Math.hypot(b.x - o.x, b.y - o.y) <= b.radius + o.radius) {
         points[currentPlayer - 1] += o.v;
+        if (gameMode !== "freeplay") grantXP(o.v);
         pointOrbs.splice(i, 1);
       }
     }
@@ -2352,13 +3061,10 @@ function updateProjectiles(dt, now) {
     if (!b || b.dead) continue;
     pushTrail(b);
   }
-
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i];
     if (!b || b.dead) continue;
-
     if (isOutOfBounds(b)) {
-      // FIX 3: save the trail so it can keep fading on screen
       if (b.trail && b.trail.length > 1)
         fadingTrails.push({
           trail: [...b.trail],
@@ -2371,21 +3077,21 @@ function updateProjectiles(dt, now) {
       else markProjectileDead(b);
       continue;
     }
-
     const hit = resolveTerrainCollision(b);
     if (hit) {
       if (b.isStaticMine) continue;
-      // FIX 1: only bounce when actually moving into the terrain surface
       const dot = b.vx * hit.nx + b.vy * hit.ny;
       if (b.bounceCount > 0) {
         if (dot > 0) bounceProjectile(b, hit, now);
-        // dot <= 0 means ball is leaving the slope — position was already corrected, skip reflection
-      } else {
-        explodeProjectile(b, now);
-      }
+      } else explodeProjectile(b, now);
       continue;
     }
 
+    const bhit = checkBoundaryCollision(b);
+    if (bhit) {
+      resolveBoundaryCollision(b, bhit);
+      continue;
+    }
     if (checksPlayerHit(b)) {
       explodeProjectile(b, now);
       continue;
@@ -2425,12 +3131,27 @@ function hitsTerrain(b) {
   return !!hit && b.vy > 0;
 }
 function resolveTerrainCollision(b) {
-  const hit = getTerrainCollisionInfo(b);
-  if (!hit) return null;
-  b.y = hit.ty - b.radius;
-  return hit;
+  if (!b || b.dead || b.x < 0 || b.x >= terrain.length) return null;
+  if (b.isStaticMine || b.terrainArmed === false) return null;
+  const ty = getTerrainY(b.x);
+  if (b.y + b.radius < ty) return null;
+  const xL = getTerrainY(clamp(b.x - 1, 0, terrain.length - 1));
+  const xR = getTerrainY(clamp(b.x + 1, 0, terrain.length - 1));
+  let nx = xL - xR,
+    ny = 2;
+  const len = Math.hypot(nx, ny) || 1;
+  nx /= len;
+  ny /= len;
+  // Push along surface normal instead of snapping y - prevents slope teleport
+  const depth = b.y + b.radius - ty;
+  const push = Math.min(depth, b.radius * 3);
+  b.x -= nx * push;
+  b.y -= ny * push;
+  // Hard clamp at new x position
+  const cty = getTerrainY(clamp(b.x, 0, terrain.length - 1));
+  if (b.y + b.radius > cty) b.y = cty - b.radius;
+  return { ty: cty, nx, ny };
 }
-
 function checksPlayerHit(b) {
   if (!b || b.dead) return false;
   if (b.age < SELF_HIT_ARM_TIME) return false;
@@ -2473,7 +3194,6 @@ function explodeProjectile(b, now) {
     m.dead = true;
   }
 }
-
 function carveCrater(cx, cy, r) {
   const l = Math.max(0, Math.floor(cx - r)),
     ri = Math.min(terrain.length - 1, Math.ceil(cx + r));
@@ -2547,7 +3267,6 @@ function spawnSelectedAttack() {
   spawnAttack(attack, aim);
   hasShot = true;
 }
-
 function spawnStaticMine(parent, now) {
   const mineGroup = parent.mineGroup || (parent.mineGroup = []);
   const staticMine = {
@@ -2578,7 +3297,6 @@ function spawnStaticMine(parent, now) {
   mineGroup.push(staticMine);
   balls.push(staticMine);
 }
-
 function bounceProjectile(b, hit, now) {
   if (!b || b.dead) return;
   const restitution = clamp(
@@ -2671,6 +3389,7 @@ function spawnAttack(attack, aim) {
       rectW: resolveNumber(spec.rectW, 40, context),
       rectH: resolveNumber(spec.rectH, GAME_H, context),
       delay: spec.delay ?? 0,
+      boundaryBounces: 0,
     };
     applyInitialOrbit(ball, parent);
     ball.spawnX = spawnX;
@@ -2681,7 +3400,6 @@ function spawnAttack(attack, aim) {
     if (mineGroup) mineGroup.push(ball);
   });
 }
-
 function normalizeOrbit(spec, context) {
   const src =
     spec.orbit ||
@@ -2728,20 +3446,25 @@ function draw() {
     aim = getAimData();
   ctx.clearRect(0, 0, GAME_W, GAME_H);
   drawWorldBackground();
-  if (screen === "menu") {
+  if (screen == "menu") {
     drawMenu();
     return;
   }
-  if (screen === "modeSelect") {
+  if (screen == "modeSelect") {
     drawModeSelect();
     return;
   }
-  if (screen === "settings") {
+  if (screen == "settings") {
     drawSettings();
+    return;
+  }
+  if (screen == "paths") {
+    drawPaths();
     return;
   }
   if (gameOver) {
     drawTerrain();
+    drawBoundaries();
     drawPlayer(getPlayerPosition(1), 1);
     drawPlayer(getPlayerPosition(2), 2);
     drawProjectileTrails();
@@ -2760,13 +3483,14 @@ function draw() {
   ctx.rect(0, 0, GAME_W, HUD_START);
   ctx.clip();
   if (turnActive) drawAimLine(aim);
+  drawBoundaries();
   drawCraterEffects(now);
   drawProjectileTrails();
   drawFadingTrails();
   drawProjectiles();
   drawRectFlashes();
   drawPlayer(getPlayerPosition(1), 1);
-  if (gameMode === "singledevice") {
+  if (gameMode == "singledevice") {
     drawPlayer(getPlayerPosition(2), 2);
     drawInactivePlayerHealthBar();
   }
@@ -2854,7 +3578,6 @@ function drawProjectileTrails() {
     }
   }
 }
-// FIX 3: draw saved trails that are fading out after their projectile left the screen
 function drawFadingTrails() {
   for (const ft of fadingTrails) {
     if (ft.trail.length < 2) continue;
@@ -2967,20 +3690,23 @@ function drawHUD(aim) {
   }
   ctx.fillStyle = "#ffffff";
   ctx.font = "14px monospace";
+  ctx.textAlign = "left";
   ctx.fillText(
     `PWR ${Math.round(aim.power)}, ANGLE ${Math.round(aim.angle)}`,
     12,
     HUD_START + 94,
   );
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "14px monospace";
-  ctx.textAlign = "left";
   const pts = points[currentPlayer - 1];
   ctx.fillText(
     `PTS ${Number.isFinite(pts) ? pts : "\u221E"}`,
     12,
     HUD_START + 130,
   );
+  if (gameMode == "practice") {
+    ctx.fillStyle = "#ffff7f";
+    ctx.font = "12px monospace";
+    ctx.fillText(`XP ${Math.floor(playerXP)}`, 12, HUD_START + 148);
+  }
   const sel = getSelectedAttack();
   if (sel) ctx.fillText(trimLabel(sel.name, 20), 12, HUD_START + 112);
   drawAttackSelector();
@@ -3158,8 +3884,8 @@ function handleMenuClick() {
       mouseY >= btn.y &&
       mouseY <= btn.y + btn.h
     ) {
-      if (btn.label === "Play") navigateTo("modeSelect");
-      if (btn.label === "Settings") navigateTo("settings");
+      if (btn.label == "Play") navigateTo("modeSelect");
+      if (btn.label == "Settings") navigateTo("settings");
     }
   }
 }
@@ -3184,13 +3910,13 @@ function drawModeSelect() {
     {
       key: "freeplay",
       label: "Freeplay",
-      desc: "Infinite points, no opponent",
+      desc: "Infinite points + all weapons",
       disabled: false,
     },
     {
       key: "practice",
       label: "Practice",
-      desc: "Same as Freeplay for now",
+      desc: "Earn XP to unlock weapons",
       disabled: false,
     },
     {
@@ -3204,10 +3930,10 @@ function drawModeSelect() {
     bh = 90,
     gap = 20,
     cx = GAME_W / 2 - bw / 2,
-    startY = 320;
+    startY = 280;
   modes.forEach((m, i) => {
     const y = startY + i * (bh + gap),
-      active = gameMode === m.key && !m.disabled;
+      active = gameMode == m.key && !m.disabled;
     drawMenuButton(m.label, cx, y, bw, bh, active, m.disabled);
     ctx.fillStyle = m.disabled ? "#333" : "rgba(150,220,255,0.5)";
     ctx.font = "18px monospace";
@@ -3217,9 +3943,34 @@ function drawModeSelect() {
     if (!m.disabled)
       modeButtons.push({ key: m.key, x: cx, y, w: bw, h: bh });
   });
-  const py = startY + modes.length * (bh + gap) + 30;
-  drawMenuButton("\u25B6 Play", cx, py, bw, MENU_BTN_H, false, false);
-  modeButtons.push({ key: "__play", x: cx, y: py, w: bw, h: MENU_BTN_H });
+  const py = startY + modes.length * (bh + gap) + 20;
+
+  const pathsy = py;
+  ctx.fillStyle = "#1a1a0a";
+  ctx.fillRect(cx, pathsy, bw, 55);
+  ctx.strokeStyle = "#aa8800";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx, pathsy, bw, 55);
+  ctx.fillStyle = "#ffcc44";
+  ctx.font = "bold 24px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(
+    "\u2B21 Weapon Paths  \u2014  XP: " + Math.floor(playerXP),
+    cx + bw / 2,
+    pathsy + 27,
+  );
+  modeButtons.push({ key: "__paths", x: cx, y: pathsy, w: bw, h: 55 });
+
+  const play_y = pathsy + 55 + 14;
+  drawMenuButton("\u25B6 Play", cx, play_y, bw, MENU_BTN_H, false, false);
+  modeButtons.push({
+    key: "__play",
+    x: cx,
+    y: play_y,
+    w: bw,
+    h: MENU_BTN_H,
+  });
 }
 function handleModeSelectClick() {
   for (const btn of modeButtons) {
@@ -3229,11 +3980,15 @@ function handleModeSelectClick() {
       mouseY >= btn.y &&
       mouseY <= btn.y + btn.h
     ) {
-      if (btn.key === "__back") {
+      if (btn.key == "__back") {
         navigateBack();
         return;
       }
-      if (btn.key === "__play") {
+      if (btn.key == "__paths") {
+        navigateTo("paths");
+        return;
+      }
+      if (btn.key == "__play") {
         startGame();
         return;
       }
@@ -3243,7 +3998,7 @@ function handleModeSelectClick() {
 }
 function startGame() {
   restartGame();
-  if (gameMode === "freeplay" || gameMode === "practice") {
+  if (gameMode == "freeplay" || gameMode == "practice") {
     points = Array(2).fill(Infinity);
     player2Health = -1;
   }
@@ -3274,7 +4029,7 @@ function drawSettings() {
   let sx = GAME_W / 2 - total / 2;
   const my = 320;
   mapKeys.forEach((mk) => {
-    const active = settingsData.map.toLowerCase() === mk;
+    const active = settingsData.map.toLowerCase() == mk;
     drawMenuButton(
       mk[0].toUpperCase() + mk.slice(1),
       sx,
@@ -3305,7 +4060,7 @@ function handleSettingsClick() {
       mouseY >= btn.y &&
       mouseY <= btn.y + btn.h
     ) {
-      if (btn.key === "__back") {
+      if (btn.key == "__back") {
         navigateBack();
         return;
       }
@@ -3338,28 +4093,32 @@ function restartGame() {
   balls = [];
   craters = [];
   pointOrbs = [];
-  fadingTrails = []; // FIX 3: clear fading trails on restart
+  fadingTrails = [];
+  boundaries = [];
   player2X = GAME_W - 100;
   generateTerrain();
 }
 
 canvas.addEventListener("click", (e) => {
   setMouseFromEvent(e);
-  if (screen === "menu") {
-    if (document.fullscreenElement === null)
-      document.documentElement.requestFullscreen().catch(() => {});
+  document.documentElement.requestFullscreen().catch((_) => {});
+  if (screen == "menu") {
     handleMenuClick();
     return;
   }
-  if (screen === "modeSelect") {
+  if (screen == "modeSelect") {
     handleModeSelectClick();
     return;
   }
-  if (screen === "settings") {
+  if (screen == "settings") {
     handleSettingsClick();
     return;
   }
-  if (screen === "game") {
+  if (screen == "paths") {
+    handlePathsClick();
+    return;
+  }
+  if (screen == "game") {
     if (!gameRunning) {
       gameRunning = true;
       startTurn(1);
@@ -3375,11 +4134,19 @@ canvas.addEventListener("click", (e) => {
   }
 });
 
-// FIX 2: mouse wheel scrolls through weapon groups in the HUD
 canvas.addEventListener(
-  "wheel",
-  (e) => {
-    if (screen === "game" && gameRunning && turnActive) {
+  "wheel", e => {
+    if (screen == "paths") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        treeScrollX = clamp(treeScrollX + e.deltaY, 0, treeScrollMaxX);
+      } else {
+        treeScrollX = clamp(treeScrollX + e.deltaX, 0, treeScrollMaxX);
+        treeScrollY = clamp(treeScrollY + e.deltaY, 0, treeScrollMaxY);
+      }
+      return;
+    }
+    if (screen == "game" && gameRunning && turnActive) {
       e.preventDefault();
       cycleAttack(e.deltaY > 0 ? 1 : -1);
     }
@@ -3387,6 +4154,7 @@ canvas.addEventListener(
   { passive: false },
 );
 
+loadProgress();
 generateTerrain();
 loop();
 
@@ -3398,10 +4166,10 @@ function startRecording() {
   mediaRecorder = new MediaRecorder(stream, {
     mimeType: "video/webm;codecs=vp9",
   });
-  mediaRecorder.ondataavailable = (e) => {
+  mediaRecorder.ondataavailable = e => {
     if (e.data.size > 0) recordedChunks.push(e.data);
   };
-  mediaRecorder.onstop = (_) => {
+  mediaRecorder.onstop = _ => {
     const blob = new Blob(recordedChunks, { type: "video/webm" }),
       a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
