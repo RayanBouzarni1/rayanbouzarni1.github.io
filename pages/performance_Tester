@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Throughput benchmark</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description" content="1-second CPU vs WebGPU increment throughput test.">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700&display=swap');
+
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+
+            html {
+                font-family: 'Share Tech Mono', monospace;
+                color: #dff;
+                display: flex;
+                padding: 2em;
+                background:
+                    linear-gradient(135deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(-45deg, rgba(0, 0, 63, 0.4) 0%, transparent 75%),
+                    linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(-135deg, rgba(0, 63, 127, 0.4) 0%, transparent 75%);
+                background-color: #0a0a0a;
+                min-height: 100vh;
+                background-attachment: fixed;
+            }
+
+            body {
+                width: 100%;
+                max-width: 40em;
+            }
+
+            h1 {
+                font-family: 'Orbitron', sans-serif;
+                font-size: 1.6em;
+                letter-spacing: 0.12em;
+                color: #aff;
+                margin-bottom: 1.2em;
+                text-shadow: 0 0 18px rgba(0,255,255,0.3);
+            }
+
+            h2 {
+                font-family: 'Orbitron', sans-serif;
+                font-size: 1.1em;
+                letter-spacing: 0.08em;
+                color: #aff;
+                margin-top: 1.6em;
+                margin-bottom: 0.6em;
+            }
+
+            .buttons {
+                display: flex;
+                flex-direction: column;
+                gap: 0.6em;
+            }
+
+            button {
+                font-family: 'Orbitron', sans-serif;
+                cursor: pointer;
+                border: 2px solid transparent;
+                border-radius: 4px;
+                min-height: 2em;
+                min-width: 10em;
+                width: fit-content;
+                padding: 0.5em 1em;
+                font-size: 1.2em;
+                text-align: center;
+                background:
+                    linear-gradient(135deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(-45deg, rgba(0, 0, 63, 0.4) 0%, transparent 75%),
+                    linear-gradient(45deg, rgba(0, 127, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(-135deg, rgba(0, 63, 127, 0.4) 0%, transparent 75%),
+                    padding-box,
+                    linear-gradient(135deg, rgba(0, 0, 255, 0.4) 0%, transparent 75%),
+                    linear-gradient(-45deg, rgba(0, 0, 127, 0.4) 0%, transparent 75%),
+                    linear-gradient(45deg, rgba(0, 255, 255, 0.4) 0%, transparent 75%),
+                    linear-gradient(-135deg, rgba(0, 127, 255, 0.4) 0%, transparent 75%);
+                color: #dff;
+                transition: opacity 0.15s;
+            }
+
+            button:hover { opacity: 0.8; }
+            button:disabled { opacity: 0.35; cursor: default; }
+
+            p {
+                font-size: 0.85em;
+                color: rgba(150, 220, 255, 0.6);
+                line-height: 1.6;
+                margin-top: 0.2em;
+            }
+
+            .result {
+                font-family: 'Share Tech Mono', monospace;
+                font-size: 1em;
+                color: #dff;
+                margin-top: 0.8em;
+                padding: 0.8em 1em;
+                border-radius: 4px;
+                background: rgba(0, 40, 60, 0.35);
+                border: 1px solid rgba(0, 255, 255, 0.15);
+                min-height: 1.4em;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+
+            .result .big {
+                font-family: 'Orbitron', sans-serif;
+                font-size: 1.3em;
+                color: #aff;
+                text-shadow: 0 0 12px rgba(0,255,255,0.3);
+            }
+
+            .warn { color: rgba(255, 190, 130, 0.85); }
+        </style>
+    </head>
+    <body>
+        <h1>Throughput benchmark</h1>
+        <p>Each test runs for exactly 1 second and counts how many increment operations complete. CPU and WebGPU run independently, in the same tab, with nothing else changed between machines.</p>
+
+        <h2>CPU (JS, single thread)</h2>
+        <p>Increments a running counter as fast as possible for 1 second. No array is pre-allocated — that would try to reserve billions of elements up front and crash the tab before the test even starts. Counting up a number in a loop measures the same thing without that problem.</p>
+        <div class="buttons">
+            <button id="cpuBtn">Run CPU test</button>
+        </div>
+        <div class="result" id="cpuResult">Not run yet.</div>
+
+        <h2>WebGPU (compute shader)</h2>
+        <p>Runs the same kind of increment, but on the GPU across many parallel threads at once, repeated for 1 second.</p>
+        <div class="buttons">
+            <button id="gpuBtn">Run WebGPU test</button>
+        </div>
+        <div class="result" id="gpuResult">Not run yet.</div>
+
+        <script type="module">
+            const cpuBtn = document.getElementById("cpuBtn");
+            const gpuBtn = document.getElementById("gpuBtn");
+            const cpuResult = document.getElementById("cpuResult");
+            const gpuResult = document.getElementById("gpuResult");
+
+            function fmt(n) {
+                return n.toLocaleString("en-US");
+            }
+
+            // ---------- CPU test ----------
+            // Counts increments for exactly 1 second using performance.now() checked
+            // only every N iterations, so the timer check itself doesn't dominate
+            // the loop and distort the result.
+            function runCpuTest() {
+                cpuBtn.disabled = true;
+                cpuResult.textContent = "Running...";
+
+                // Let the UI repaint "Running..." before the blocking loop starts.
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    const CHECK_EVERY = 1_000_000;
+                    let count = 0;
+                    const start = performance.now();
+                    let elapsed = 0;
+
+                    while (true) {
+                        for (let i = 0; i < CHECK_EVERY; i++) {
+                            count = count + 1;
+                        }
+                        elapsed = performance.now() - start;
+                        if (elapsed >= 1000) break;
+                    }
+
+                    const perSecond = count / (elapsed / 1000);
+                    cpuResult.innerHTML =
+                        `<span class="big">${fmt(Math.round(perSecond))}</span> increments/sec\n` +
+                        `(${fmt(count)} total in ${elapsed.toFixed(1)} ms)`;
+                    cpuBtn.disabled = false;
+                }));
+            }
+
+            // ---------- WebGPU test ----------
+            // Dispatches a compute shader that increments every element of a buffer
+            // once per pass, repeatedly, for 1 second, then reads back the total
+            // number of increments actually performed (workgroups * passes * 256).
+            async function runGpuTest() {
+                gpuBtn.disabled = true;
+                gpuResult.textContent = "Running...";
+
+                if (!("gpu" in navigator)) {
+                    gpuResult.innerHTML = `<span class="warn">WebGPU is not available in this browser/device. This test can't run here.</span>`;
+                    gpuBtn.disabled = false;
+                    return;
+                }
+
+                let adapter, device;
+                try {
+                    adapter = await navigator.gpu.requestAdapter();
+                    if (!adapter) throw new Error("no adapter");
+                    device = await adapter.requestDevice();
+                } catch (e) {
+                    gpuResult.innerHTML = `<span class="warn">WebGPU is available but no compatible GPU adapter could be created (${e.message || e}).</span>`;
+                    gpuBtn.disabled = false;
+                    return;
+                }
+
+                const WORKGROUP_SIZE = 256;
+                const WORKGROUP_COUNT = 1024; // 262,144 lanes incremented per pass
+                const ELEMENT_COUNT = WORKGROUP_SIZE * WORKGROUP_COUNT;
+
+                const shaderCode = `
+                    @group(0) @binding(0) var<storage, read_write> data: array<u32>;
+
+                    @compute @workgroup_size(${WORKGROUP_SIZE})
+                    fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                        data[id.x] = data[id.x] + 1u;
+                    }
+                `;
+
+                const module = device.createShaderModule({ code: shaderCode });
+                const pipeline = device.createComputePipeline({
+                    layout: "auto",
+                    compute: { module, entryPoint: "main" }
+                });
+
+                const bufferSize = ELEMENT_COUNT * 4; // u32
+                const buffer = device.createBuffer({
+                    size: bufferSize,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+                });
+
+                const bindGroup = device.createBindGroup({
+                    layout: pipeline.getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: { buffer } }]
+                });
+
+                const readBuffer = device.createBuffer({
+                    size: bufferSize,
+                    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+                });
+
+                const start = performance.now();
+                let passes = 0;
+                let elapsed = 0;
+
+                // Submit a batch of passes, then wait for the GPU, repeat, until 1s elapsed.
+                while (true) {
+                    const encoder = device.createCommandEncoder();
+                    const BATCH = 20;
+                    for (let b = 0; b < BATCH; b++) {
+                        const pass = encoder.beginComputePass();
+                        pass.setPipeline(pipeline);
+                        pass.setBindGroup(0, bindGroup);
+                        pass.dispatchWorkgroups(WORKGROUP_COUNT);
+                        pass.end();
+                    }
+                    device.queue.submit([encoder.finish()]);
+                    await device.queue.onSubmittedWorkDone();
+
+                    passes += BATCH;
+                    elapsed = performance.now() - start;
+                    if (elapsed >= 1000) break;
+                }
+
+                // Read back one element to sanity-check the pass count matches reality.
+                const copyEncoder = device.createCommandEncoder();
+                copyEncoder.copyBufferToBuffer(buffer, 0, readBuffer, 0, 4);
+                device.queue.submit([copyEncoder.finish()]);
+                await readBuffer.mapAsync(GPUMapMode.READ);
+                const actualIncrementsPerLane = new Uint32Array(readBuffer.getMappedRange())[0];
+                readBuffer.unmap();
+
+                const totalIncrements = actualIncrementsPerLane * ELEMENT_COUNT;
+                const perSecond = totalIncrements / (elapsed / 1000);
+
+                gpuResult.innerHTML =
+                    `<span class="big">${fmt(Math.round(perSecond))}</span> increments/sec\n` +
+                    `(${fmt(totalIncrements)} total across ${fmt(ELEMENT_COUNT)} parallel lanes, ${actualIncrementsPerLane} passes each, in ${elapsed.toFixed(1)} ms)`;
+                gpuBtn.disabled = false;
+            }
+
+            cpuBtn.addEventListener("click", runCpuTest);
+            gpuBtn.addEventListener("click", runGpuTest);
+        </script>
+    </body>
+</html>
